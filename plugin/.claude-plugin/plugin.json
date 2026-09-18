@@ -1,7 +1,7 @@
 {
   "name": "sadensmol",
   "description": "Hooks for the sadensmol skills. Skills and agents install separately as files.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": {
     "name": "saden"
   }
