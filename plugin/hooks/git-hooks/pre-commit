@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Global git pre-commit installed via `core.hooksPath` -> <plugin>/hooks/git-hooks.
+# 1) runs the sadensmol secret / private-info scanner over the staged diff;
+# 2) chains the repo's own .git/hooks/pre-commit if it exists (so this doesn't
+#    clobber project-local hooks that live in the default location).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCANNER="$HERE/../secret-scan.py"
+
+if [ -f "$SCANNER" ]; then
+  python3 "$SCANNER" --staged || exit $?
+fi
+
+# Chain a repo-local default-location pre-commit, if any (and not this file).
+root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+local_hook="${root:+$root/.git/hooks/pre-commit}"
+if [ -n "${local_hook:-}" ] && [ -x "$local_hook" ] && [ "$local_hook" != "${BASH_SOURCE[0]}" ]; then
+  exec "$local_hook" "$@"
+fi
+exit 0

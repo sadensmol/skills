@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "sadensmol",
+  "description": "Marketplace for the sadensmol Claude Code plugin (hooks)",
+  "owner": {
+    "name": "saden"
+  },
+  "plugins": [
+    {
+      "name": "sadensmol",
+      "description": "Hooks for the sadensmol skills. Skills and agents install separately as files.",
+      "source": "./plugin",
+      "author": {
+        "name": "saden"
+      }
+    }
+  ]
+}

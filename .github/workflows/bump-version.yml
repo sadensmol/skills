@@ -1,0 +1,93 @@
+name: Bump plugin version
+
+on:
+  push:
+    branches: [main]
+
+# allow the workflow to push the version bump back to the repo
+permissions:
+  contents: write
+
+# never run two bumps at once
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    # skip when the previous commit was the bump itself
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide bump type
+        id: kind
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # files added (status A) in this push; fall back to the last commit
+          # for a brand-new branch where BEFORE is the empty/zero SHA
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            range="HEAD~1 HEAD"
+          else
+            range="$BEFORE $AFTER"
+          fi
+
+          added=$(git diff --name-status --diff-filter=A $range -- || true)
+          echo "added files:"; echo "$added"
+
+          # a new plugin (new plugin.json) or a new skill (new SKILL.md) => minor
+          if echo "$added" | grep -qE '(/\.claude-plugin/plugin\.json|/SKILL\.md)$'; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version in plugin.json
+        id: bump
+        env:
+          KIND: ${{ steps.kind.outputs.type }}
+        run: |
+          set -euo pipefail
+          FILE="plugin/.claude-plugin/plugin.json"
+
+          current=$(jq -r '.version' "$FILE")
+          IFS='.' read -r major minor patch <<< "$current"
+
+          if [ "$KIND" = "minor" ]; then
+            next="${major}.$((minor + 1)).0"
+          else
+            next="${major}.${minor}.$((patch + 1))"
+          fi
+
+          jq --arg v "$next" '.version = $v' "$FILE" > "$FILE.tmp"
+          mv "$FILE.tmp" "$FILE"
+
+          echo "next=$next" >> "$GITHUB_OUTPUT"
+          echo "Bumped $current -> $next ($KIND)"
+
+      - name: Commit and push
+        env:
+          KIND: ${{ steps.kind.outputs.type }}
+          NEXT: ${{ steps.bump.outputs.next }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "No version change, nothing to commit."
+            exit 0
+          fi
+
+          git add plugin/.claude-plugin/plugin.json
+          git commit -m "chore: $KIND bump plugin version to $NEXT [skip ci]"
+          git push origin HEAD:main
