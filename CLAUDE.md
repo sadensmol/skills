@@ -5,7 +5,7 @@ Claude Code, Codex and OpenCode, and it also carries a Claude Code plugin
 (`plugin/`) for the hooks, which the other harnesses cannot install.
 Everything committed here is world-readable, forever, including git history.
 
-Therefore every file in `skills/`, `agents/`, `harness/` and `plugin/` must be **generic**: usable by
+Therefore every file in `skills/`, `agents/`, `commands/`, `harness/` and `plugin/` must be **generic**: usable by
 a stranger who has none of the author's projects, machines, accounts, or tools.
 Project-specific knowledge lives in the private namespace repositories, never here.
 
@@ -33,7 +33,7 @@ Not now, not "temporarily", not in an example.
 - A leaked secret is not fixed by a follow-up commit — it stays in history. Rotate
   it, then rewrite history.
 
-## 2. No project-specific knowledge in `skills/`, `agents/` or `plugin/`
+## 2. No project-specific knowledge in `skills/`, `agents/`, `commands/` or `plugin/`
 
 A `sadensmol-` skill is the **generic layer**. It must not contain:
 
@@ -88,9 +88,9 @@ earlier assignment.
 Run the sweep, and read the hits — do not trust a clean exit code alone:
 
 ```bash
-grep -rnE '(/Users/|/home/[a-z]|~/[A-Za-z])' skills/ agents/ harness/ plugin/   # local paths
-grep -rniE '<your project names here>' skills/ agents/ harness/ plugin/         # project names
-grep -rniE '(xoxb-|xoxp-|ghp_|github_pat_|ATATT|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY)' skills/ agents/ harness/ plugin/
+grep -rnE '(/Users/|/home/[a-z]|~/[A-Za-z])' skills/ agents/ commands/ harness/ plugin/   # local paths
+grep -rniE '<your project names here>' skills/ agents/ commands/ harness/ plugin/         # project names
+grep -rniE '(xoxb-|xoxp-|ghp_|github_pat_|ATATT|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY)' skills/ agents/ commands/ harness/ plugin/
 git log --all -p -G'(xoxb-|ghp_|ATATT|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY)' --oneline   # history too
 ```
 
@@ -114,6 +114,12 @@ hole otherwise reopens in the next session.
   says what they are), `description` and `mode: subagent`.
   Never add `color:` with a named value — OpenCode rejects it and refuses to load any
   config at all.
+- `commands/<name>.md` is a short slash-command alias: the filename is the command, the
+  body invokes a namespaced skill and forwards `$ARGUMENTS`. **Keep `description` as the
+  only frontmatter key** — it is the one both harnesses read. A command names a skill,
+  never a harness tool, and must never claim a bare name that more than one namespace
+  defines (`linear`, `router`); the routers decide those per session. `README.md` →
+  *Adding a command* is the procedure.
 - Skills are markdown with YAML frontmatter (`name`, `description`); keep the
   description trigger-rich, since it is what routes work to the skill. Quote any
   description containing a colon followed by a space — unquoted, it is invalid

@@ -6,6 +6,17 @@ Its tool registry is: `bash`, `read`, `write`, `edit`, `patch`, `glob`, `grep`, 
 `webfetch`, `skill`, `task`, `question`, `todowrite`. Anything a skill asks for that is not
 on that list does not exist here — do not simulate it, say so and take the stated fallback.
 
+## Global config locations
+
+- Load global instructions and configuration only from `~/.config/opencode`.
+- Load global skills only from `~/.agents` and `~/.config/opencode`.
+- Never load or inspect files under `~/.claude` — that tree belongs to another harness.
+
+`~/.config/opencode/AGENTS.md` is a symlink to `instructions/AGENTS.md` in the skills repository,
+the same file Claude Code reads as `~/.claude/CLAUDE.md`, so the standing instructions are
+identical in both harnesses. Anything that holds only for OpenCode belongs in this file,
+never in that shared one.
+
 ## load-skill
 
 The `skill` tool: `skill({ name: "sadensmol-go-programming" })`. Skill ids are flat and

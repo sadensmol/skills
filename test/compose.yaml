@@ -1,0 +1,27 @@
+# Container harness for this repository.
+#
+#   docker compose -f test/compose.yaml run --rm test     # the checks
+#   docker compose -f test/compose.yaml run --rm shell    # poke around by hand
+#
+# The repository is mounted read-only and copied inside the container before
+# anything installs, so a test run can never write to your working tree.
+name: skills-test
+
+x-base: &base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /home/agent
+  volumes:
+    - ../:/src:ro       # repository under test — read-only on purpose
+    - ./:/home/agent/test:ro
+
+services:
+  test:
+    <<: *base
+
+  shell:
+    <<: *base
+    command: ["bash", "-l"]
+    stdin_open: true
+    tty: true
