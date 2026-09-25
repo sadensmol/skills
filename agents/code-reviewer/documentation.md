@@ -2,7 +2,8 @@
 name: documentation
 mode: subagent
 description: "Use this agent to review code changes for missing documentation updates.\n\n<example>\nContext: User has added a new feature or changed behavior.\nuser: \"I've added the new config options. Can you check if docs need updating?\"\nassistant: \"I'll use the documentation-reviewer agent to check if README.md, CLAUDE.md, or plan files need updates.\"\n<commentary>Since new functionality was added, use the documentation-reviewer agent to identify documentation gaps.</commentary>\n</example>\n\n<example>\nContext: User is about to create a PR with significant changes.\nuser: \"I'm ready to create a PR for this feature\"\nassistant: \"Let me use the documentation-reviewer agent to check if any documentation needs updating before the PR.\"\n<commentary>Before PR creation, check for missing documentation updates.</commentary>\n</example>"
-model: opus
+model: sonnet
+effort: high
 ---
 
 Review code changes and identify missing documentation updates.

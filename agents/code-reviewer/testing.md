@@ -2,7 +2,8 @@
 name: testing
 mode: subagent
 description: "Use this agent to review test coverage and quality.\n\n<example>\nContext: User has added tests and wants them reviewed.\nuser: \"I've added tests for the new feature. Are they good enough?\"\nassistant: \"I'll use the testing-reviewer agent to review the test coverage and quality.\"\n<commentary>Since the user wants test quality feedback, use the testing-reviewer agent to analyze coverage and test quality.</commentary>\n</example>\n\n<example>\nContext: User has implemented a feature without tests.\nuser: \"The feature is done. What tests do I need?\"\nassistant: \"I'll use the testing-reviewer agent to identify missing test coverage and suggest what tests are needed.\"\n<commentary>Use the testing-reviewer to identify missing tests and coverage gaps.</commentary>\n</example>"
-model: opus
+model: sonnet
+effort: high
 ---
 
 Review test coverage and quality.

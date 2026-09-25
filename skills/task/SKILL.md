@@ -1,6 +1,6 @@
 ---
 name: sadensmol-task
-description: "Single entry point for project task/worktree management across the personal plugins. Dispatches `/task <subcommand>` to the correct project's task skill (`<project>-task`) based on the active agterm workspace (authoritative) or the cwd. Use when the user says: \"task new <branch>\", \"new task\", \"task plan\", \"task list\", \"task switch\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task finish\", \"task cleanup\", \"create worktree\", or a bare \"/task …\". Forwards all arguments verbatim to the resolved project skill — it never runs task work itself."
+description: "Single entry point for project task/worktree management across the personal plugins. Dispatches `/task <subcommand>` to the correct project's task skill (`<project>-task`) based on the active agterm workspace (authoritative) or the cwd. Use when the user says: \"task new <branch>\", \"new task\", \"task plan\", \"task list\", \"task status\", \"task switch\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task finish\", \"task cleanup\", \"create worktree\", or a bare \"/task …\". Forwards all arguments verbatim to the resolved project skill — it never runs task work itself."
 ---
 
 # Task (dispatcher)
@@ -8,7 +8,7 @@ description: "Single entry point for project task/worktree management across the
 `/task` is the **single visible** task entry across the personal plugins. The
 per-project implementations (`<project>-task`) are hidden from the `/` menu via
 `user-invocable: false` and are reached **only** through this dispatcher (or by
-the model directly, since `Skill(<plugin>-task)` still works on a hidden skill).
+the model directly, since the harness's `load-skill` capability still works on a hidden skill).
 
 **This skill knows NOTHING about any specific project (MUST FOLLOW).** No project
 name, repo name, workspace name, path, tracker or issue prefix ever appears here —
@@ -18,18 +18,20 @@ repository knowledge is **passed down** to the project skill, never reimplemente
 here. If you find yourself wanting to special-case a project in this file, that
 logic belongs in that project's plugin.
 
-Your job: detect which project this session belongs to, then invoke that
-project's `-task` skill via your harness's skill tool, **forwarding the user's arguments
-unchanged**. Do NOT run any worktree/git/plan/finish work yourself — the
+Your job: detect which project this session belongs to, then ensure that project's
+`-task` skill is loaded via the harness's `load-skill` capability, **forwarding the user's
+arguments unchanged**. If its full instructions are already present in the current context,
+do not load it again; apply them to the new arguments. Do NOT run any
+worktree/git/plan/finish work yourself — the
 **project-specific** subcommands (`new`, `plan`, `finish`, `cleanup`) live in the
 project skill.
 
 **Handled here, NOT delegated:** `zed`, `code`, `console`, `review`, `changes`,
-`list`, `switch`. These are project-agnostic — opening the worktree in an editor
+`status`, `list`, `switch`. These are project-agnostic — opening the worktree in an editor
 (`zed`/`code`) or terminal (`console`), opening plannotator at the worktree base
 (`review` for real code changes, `annotate` for a plan/docs `.md`), walking the
 task's business-logic diffs in chat (`changes`), and
-enumerating (`list`) / picking (`switch`) worktrees are
+enumerating (`list`) / reporting on (`status`) / picking (`switch`) worktrees are
 identical across projects (only the single-repo vs multi-repo shape differs, and
 plannotator ≥ 0.21 auto-discovers nested repos). So this dispatcher runs them
 itself — with a one-time VS Code trust preflight for `code`, and `switch`
@@ -38,7 +40,7 @@ delegating only its final "open" step back to the project's `new`. See the
 
 ## Step 1 — detect the project (agterm workspace decides first)
 
-Run this single Bash call:
+Run this single shell call:
 
 ```bash
 echo "--- agterm workspace ---"
@@ -115,23 +117,24 @@ guess a path, and never ask a skill to hand you one.
 ## Step 3 — delegate, or handle here
 
 **Handled here (do NOT delegate):** `zed`, `code`, `console`, `review`,
-`changes`, `list`, `switch` — see the "handled here" sections below.
-`zed`/`code`/`console`/`review`/`changes`
-work off the cwd (the current worktree); `list`/`switch` use the **project root**
-from Step 2.
+`changes`, `status`, `list`, `switch` — see the "handled here" sections below.
+`zed`/`code`/`console`/`review`/`changes`/`status`
+work off the cwd (the current worktree); `list`/`switch` and `status --all` use
+the **project root** from Step 2.
 
 **Delegated to the project skill:** everything else — `new`, `plan`, `finish`,
-`cleanup`. Invoke the resolved skill, passing the **full
+`cleanup`. Ensure the resolved skill is loaded, without reloading it when its full
+instructions are already present, then apply the **full
 argument string** the user gave `/task` (subcommand + args) **verbatim** as the
 skill's args. Examples:
 
-- `/task new ABC-XXX ABC-YYY` → invoke `<project>-task` with args `new ABC-XXX ABC-YYY`
-- `/task finish` → invoke `<project>-task` with args `finish`
-- bare `/task` (no args) → invoke the resolved skill with no args (it defaults to `new` per its own rules)
+- `/task new ABC-XXX ABC-YYY` → apply `<project>-task` with args `new ABC-XXX ABC-YYY`
+- `/task finish` → apply `<project>-task` with args `finish`
+- bare `/task` (no args) → apply the resolved skill with no args (it defaults to `new` per its own rules)
 
 Do not re-interpret, expand, or execute a **delegated** subcommand yourself. The
 project skill owns `new` / `plan` / `finish` / `cleanup`; `zed` / `code` /
-`console` / `review` / `changes` / `list` / `switch` are handled here.
+`console` / `review` / `changes` / `status` / `list` / `switch` are handled here.
 
 **A base branch on `new` is forwarded, never interpreted.** `--base <branch>` — or
 the prose form ("based on `X`", "on top of `X`", "stacked on `X`") — goes to the
@@ -194,13 +197,70 @@ Then choose what to open — works for single-repo and multi-repo worktrees alik
 (`*/` matches only dirs, so hidden `.claude` and the `PLAN.md` file are excluded):
 
 ```bash
-first=""; count=0
+# No arrays here on purpose: agents run this under bash OR zsh, and zsh indexes
+# arrays from 1 — ${arr[0]} silently yields "" there, which reads as "no repo
+# changed" and sends you to the base. Plain counters behave the same in both.
+first=""; count=0; nchanged=0; lastchanged=""; target=""; reponames=""; changednames=""
 for d in "$base"/*/; do
   [ -d "$d" ] || continue          # guard against a literal '*/' when nothing matches
   count=$((count + 1))
   [ -n "$first" ] || first="${d%/}"
+  git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || continue
+  # A repo counts as CHANGED only for real work. `task new` refreshes dep pins
+  # in EVERY repo of the worktree, so counting those would mark an untouched
+  # repo as the one being worked on — the exact false positive this guards.
+  if git -C "$d" status --porcelain -uall 2>/dev/null | while IFS= read -r line; do
+       f="${line:3}"
+       case "$f" in
+         go.mod|go.sum|*/go.mod|*/go.sum) ;;              # dep pins from `task new`
+         pubspec.lock|*/pubspec.lock) ;;
+         local.properties|*/local.properties) ;;          # Flutter/Android generated
+         .claude/*|*/.claude/*) ;;                        # harness config, not work
+         .DS_Store|*/.DS_Store) ;;
+         *) echo x; break ;;
+       esac
+     done | grep -q x; then
+    nchanged=$((nchanged + 1)); lastchanged="${d%/}"
+    changednames="$changednames ${d%/}"
+  fi
+  reponames="$reponames ${d%/}"
 done
+if [ "$nchanged" -eq 1 ]; then target="$lastchanged"; fi
+echo "count=$count changed=$nchanged target=${target:-none}"
+echo "REPOS:$reponames"
+echo "CHANGED:$changednames"
 ```
+
+(declare the two accumulators with the counters: `reponames=""; changednames=""`.)
+
+**One changed repo → open ONLY that repo (MUST FOLLOW).** A multi-repo worktree
+almost always has the work in exactly one of its repos; opening the bare base
+there buries that repo one level down and gives the editor a root that is not a
+git repo. `$target` is that repo — `console` resolves the working repo the same
+way, and the two must not disagree about which repo you are in.
+
+`PLAN.md` sits at the base (outside every repo) and never counts. Neither do the
+dep-pin and harness paths filtered above — otherwise a `task new` that only
+refreshed `go.sum` would make an untouched repo look like the one being worked
+on.
+
+**Ambiguous → ASK, never silently open the bare base (MUST FOLLOW).** The base is
+almost never what the user wants: it is not a git repo, and it buries the code one
+level down. So when the resolution above does NOT land on exactly one repo —
+`nchanged` is 0 (nothing changed yet, or only filtered dep churn) or 2+, and the
+worktree has **2–4** repos — **ask the user through the harness's `ask-user` capability** which repo to open,
+exactly like `console` does. This is the common state right after `task new` /
+`task plan`: no code written yet, so no repo "has changes", and opening the base
+sends the user to the wrong root.
+
+- List every repo by `basename`, **changed ones first**, labelled
+  `<repo> (changes)` when it has real work.
+- Add a final option `open the base (all repos)` → `$target="$base"`.
+- Set `$target` from the answer, then open it with the snippets below.
+- **No ask when there is nothing to ask:** exactly one changed repo → open it; a
+  single-repo worktree (`count -eq 1`) → open that repo; 0 repos → the base.
+- More than 4 repos: show the 4 best candidates (changed first, then the rest) and
+  let the user type "Other".
 
 ### `code` (one-time VS Code trust)
 
@@ -222,25 +282,31 @@ else
 fi
 ```
 
-- **`NEEDS_TRUST`** → VS Code just opened `<root>`. Ask the user (via
-  `AskUserQuestion`) to click **"Yes, I trust the authors"** in that folder's
+- **`NEEDS_TRUST`** → VS Code just opened `<root>`. Ask the user through the
+  harness's `ask-user` capability to click **"Yes, I trust the authors"** in that folder's
   trust dialog and confirm once done. Only **after** they confirm, record the
   marker (`touch "$root/.vscode-parent-trusted"`), then open the worktree.
 - **`TRUSTED`** → open the worktree straight away.
 
-Open the worktree (single dir → open it directly; multiple → open the base):
+Open the worktree — the one changed repo wins, then a lone repo, then whatever
+the ambiguity ask above resolved to (`$target` is set from the user's pick):
 
 ```bash
-if [ "$count" -eq 1 ]; then code "$first"; else code "$base"; fi
+if [ -n "$target" ]; then code "$target"          # the changed repo, or the user's pick
+elif [ "$count" -eq 1 ]; then code "$first"       # single-repo worktree
+else code "$base"; fi                             # only when there was nothing to ask
 ```
 
 ### `zed`
 
-No trust concept — just open (single dir → that repo; multiple → all top-level
-dirs as a multiroot project):
+No trust concept — same resolution (including the ambiguity ask), only the final
+fallback differs (Zed opens the top-level dirs as one multiroot project rather
+than the bare base):
 
 ```bash
-if [ "$count" -eq 1 ]; then
+if [ -n "$target" ]; then
+  env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT zed "$target"
+elif [ "$count" -eq 1 ]; then
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT zed "$first"
 else
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT zed "$base"/*/
@@ -298,7 +364,22 @@ if [ "$proj" = "$base" ]; then
     [ -d "$d" ] || continue
     git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || continue
     r="$(basename "${d%/}")"; repos+=("$r")
-    [ -n "$(git -C "$d" status --porcelain 2>/dev/null)" ] && changed+=("$r")
+    # Same "real work" filter `zed`/`code` use — the two must never disagree
+    # about which repo you are in. `task new` refreshes dep pins in EVERY
+    # repo, so counting those would pick an untouched one.
+    if git -C "$d" status --porcelain -uall 2>/dev/null | while IFS= read -r line; do
+         f="${line:3}"
+         case "$f" in
+           go.mod|go.sum|*/go.mod|*/go.sum) ;;
+           pubspec.lock|*/pubspec.lock) ;;
+           local.properties|*/local.properties) ;;
+           .claude/*|*/.claude/*) ;;
+           .DS_Store|*/.DS_Store) ;;
+           *) echo x; break ;;
+         esac
+       done | grep -q x; then
+      changed+=("$r")
+    fi
   done
   echo "REPOS: ${repos[*]}"
   echo "CHANGED: ${changed[*]}"
@@ -313,32 +394,33 @@ Then pick `proj` from that output:
 - **2+ repos, exactly 1 changed** → `proj="$base/<the changed repo>"` — that's the
   repo being worked on; open it, no prompt.
 - **2+ repos, 0 or 2+ changed** → genuinely ambiguous, so **ask** with
-  `AskUserQuestion` which repo to open: list the repos with the **changed** ones
-  first, labelled (e.g. `platform-integration-acme (changes)`), plus a final
-  `open the base (all repos)` option that maps to `proj="$base"`. Set
-  `proj="$base/<pick>"` from the answer.
+   the harness's `ask-user` capability which repo to open: list the repos with the **changed** ones
+   first, labelled (e.g. `platform-integration-acme (changes)`), plus a final
+   `open the base (all repos)` option that maps to `proj="$base"`. Set
+   `proj="$base/<pick>"` from the answer.
+
+Use the harness's `ask-user` capability for this choice. If that capability is
+unavailable, ask the same choice in chat with a flat numbered list and wait for
+the user's selection. Never choose a repo silently when the worktree is ambiguous.
 
 (If cwd was already inside a specific repo, this whole picker is skipped — open
 that repo directly, no prompt.) Finally set `name="$(basename "$proj")"`.
 
-Then open the terminal. **agterm is the primary target** (a new session);
-tmux is a fallback so `console` still works there:
+Then open the terminal as a new agterm session:
 
 ```bash
 if [ -n "${AGTERM_ENABLED:-}" ] && command -v agtermctl >/dev/null 2>&1; then
   # --after "$AGTERM_SESSION_ID": open the new session in the CURRENT session's
   # workspace, right BELOW this session (the anchor carries its own workspace).
   agtermctl session new --cwd "$proj" --name "$name" --after "$AGTERM_SESSION_ID"   # new agterm session in this workspace, below current, selected + focused
-elif [ -n "${TMUX:-}" ]; then
-  tmux new-window -c "$proj" -n "$name"                # fallback: new tmux window in the project dir
 else
-  echo "NOT_IN_AGTERM_OR_TMUX"
+  echo "NOT_IN_AGTERM"
 fi
 ```
 
-Each `task console` opens a **fresh** session/window (the user asked for a new
-console) — no select-existing logic. If it prints `NOT_IN_AGTERM_OR_TMUX`, tell
-the user `console` needs agterm (or tmux) and stop.
+Each `task console` opens a **fresh** session (the user asked for a new
+console) — no select-existing logic. If it prints `NOT_IN_AGTERM`, tell
+the user `console` needs agterm and stop.
 
 **The console ALWAYS opens next to the session that asked for it (MUST FOLLOW).**
 `--after "$AGTERM_SESSION_ID"` is not optional: the anchor carries its own
@@ -354,18 +436,13 @@ to them: one spinner, no way to tell which of five things is running, which
 finished, and which wedged. So every self-contained unit of work inside a task
 gets its **own session branch**, and the main session stays a thin coordinator.
 
-**A branch is `Agent` with `subagent_type: "fork"`** — the model-callable form of
-the `/branch` command. The fork inherits this conversation's full context (it
+**A branch uses the harness's `spawn-subagent` capability** — the model-callable
+form of the `/branch` command. The fork inherits this conversation's full context (it
 already knows the ticket, the plan, the worktree, the decisions), runs in the
 background, and its tool output stays out of the main session's context.
 
-```
-Agent({
-  subagent_type: "fork",
-  description: "<3-5 words — the UI label>",
-  prompt: "<the unit of work, end to end, incl. what 'done' means>"
-})
-```
+Pass the branch a short UI label and a prompt covering the unit of work end to end,
+including what "done" means.
 
 ### Branch it — these are MANDATORY, not judgement calls
 
@@ -376,7 +453,7 @@ Start a branch **before** you begin, not after it turns out slow:
 - **Running tests, and fixing what they find.** The branch owns the whole loop:
   bring the stack up, run the suite, read the failures, fix them, re-run until
   green. Targeted runs included — "this one is quick" is how the session ends up
-  frozen. See *Running infra…* below for the background-Bash mechanics it uses.
+  frozen. See *Running infra…* below for the harness's `run-background-shell` mechanics.
 - **EVERY interaction with an EXTERNAL system — categorical, no exceptions, no
   "this one call is small".** If the work leaves this machine, it runs in a
   branch:
@@ -403,7 +480,7 @@ Start a branch **before** you begin, not after it turns out slow:
 
 ### Run them in PARALLEL
 
-Independent branches go out **in a single message, as multiple `Agent` calls** —
+Independent branches go out **in one fan-out using the harness's `fan-out` capability** —
 that is the whole point. Five repos' suites is five branches at once, not five in
 sequence. Serialize only true dependencies (a dependency's branch finishes before
 its dependent's starts).
@@ -416,9 +493,9 @@ its dependent's starts).
 
 ### Check on them, and merge back
 
-- **`ListAgents`** — what is live right now.
-- **`SendMessage({to: "<name>", …})`** — steer a running branch, or resume a
-  finished one with its context intact. Never re-spawn to ask a follow-up.
+- Use the harness's branch-management facilities to see what is live and steer a
+  running branch or resume a finished one with its context intact. Never re-spawn
+  to ask a follow-up.
 - A branch completing arrives as a `<task-notification>`; its final report is
   **not shown to the operator** — relay what matters.
 - **Merge back when the branch is done**: read its report, apply/keep whatever
@@ -431,14 +508,13 @@ its dependent's starts).
 A branch is finished when its unit of work is finished — **close it then**, pass
 or fail:
 
-```
-TaskStop({ task_id: "<branch name or id>" })
-```
+Use the harness's `stop-subagent` capability.
 
 Never leave a branch running because "it might still be useful": a stuck fork
 still shows as live in the operator's UI and makes the session look busy when it
 is not. **`cleanup` is the backstop** — before a project's `cleanup` deletes the
-worktree, `ListAgents` and `TaskStop` **every** branch that belongs to this task.
+worktree, close every branch that belongs to this task through the harness's
+branch-management facilities.
 Branches are in-process agents, so a `cleanup-task.sh` shell script cannot reach
 them: closing them is the agent's job, and it happens *before* the script runs.
 
@@ -446,7 +522,7 @@ them: closing them is the agent's job, and it happens *before* the script runs.
 
 - **The two approval gates** — plan approval and the pre-commit code review.
   Those belong to the operator, in the conversation they are reading.
-- **Any question to the operator** (`AskUserQuestion`). A branch that needs a
+- **Any question to the operator** through the harness's `ask-user` capability. A branch that needs a
   decision reports back; it does not prompt the user.
 - **`git commit` / `push` / `gh pr merge`** — the main session owns the
   irreversible steps, on work the operator approved.
@@ -460,7 +536,8 @@ them: closing them is the agent's job, and it happens *before* the script runs.
 
 ### Branch ≠ console
 
-A **branch** is a parallel *agent* lane (`Agent` fork) that the main session
+A **branch** is a parallel *agent* lane created through the harness's
+`spawn-subagent` capability that the main session
 opens for work it wants to run alongside the conversation. A **console** is an
 agterm session — a shell for the **operator** to type in, opened only by the
 `console` subcommand when they ask for one.
@@ -474,12 +551,90 @@ Infrastructure and the tests that use it are two different things in two differe
 places. Getting this wrong is what produces invisible hangs, half-migrated
 databases, and stacks nobody can find.
 
+**0. TAKE THE LOCK FIRST — no stack starts without it (MUST FOLLOW).** Rules 3
+and 4 below say "only one at a time"; this is what *enforces* it. Session branches
+run concurrently and each one reaches for the stack on its own, so "remember not
+to start a second" has already failed in practice: two stacks came up, fought over
+the same host ports, and **neither** test run worked. The lock makes the second
+attempt fail loudly instead of silently breaking both.
+
+The lock is a **directory at the worktree base** — outside every git repo, so it
+is never staged or committed, and visible to every branch, console and agent of
+the task:
+
+```bash
+case "$PWD" in
+  */.worktrees/*) root="${PWD%%/.worktrees/*}"; b="${PWD#*/.worktrees/}"; b="${b%%/*}"
+                  WT="$root/.worktrees/$b" ;;
+  *) echo "NOT_IN_A_WORKTREE — no lock, no stack"; ;;
+esac
+LOCK="$WT/.infra.lock"
+```
+
+Acquire before the bring-up. First look for a stack held by **another task** —
+its lock sits in a sibling worktree, so only this scan can see it. Then take this
+task's lock. `mkdir` is atomic, so exactly one caller wins even when two branches
+race for it in the same instant:
+
+```bash
+other_held=
+for other in "$root"/.worktrees/*/.infra.lock; do
+  [ -d "$other" ] && [ "$other" != "$LOCK" ] || continue
+  other_held=1; echo "OTHER_TASK_HOLDS_A_STACK:"; sed 's/^/  /' "$other/owner" 2>/dev/null
+done
+if [ -n "$other_held" ]; then
+  :   # another task owns the ports — do not take this lock
+elif mkdir "$LOCK" 2>/dev/null; then
+  printf 'task=%s\nworktree=%s\nstack=%s\nrepo=%s\nsession=%s\npid=%s\nstarted=%s\n' \
+    "$b" "$WT" "<stack>" "<repo>" "${AGTERM_SESSION_ID:-}" "$$" "$(date -u +%FT%TZ)" > "$LOCK/owner"
+  echo ACQUIRED
+else
+  echo HELD; cat "$LOCK/owner" 2>/dev/null
+fi
+```
+
+- **`OTHER_TASK_HOLDS_A_STACK`** → another task's stack owns the host ports. Do
+  NOT start this one. Say in chat which task (`task=`) and worktree hold it, and
+  wait for that task to release it.
+- **`ACQUIRED`** → bring the stack up.
+- **`HELD`** → **do NOT start a second stack.** The `owner` file names the task,
+  the worktree, the stack, the repo and the agterm session holding it. Wait for
+  that run to finish and release, or say in chat which stack holds the lock and
+  what is queued behind it. Never `rm -rf` a live lock to get past it.
+
+**Release it in the SAME command as the teardown — never separately:**
+
+```bash
+make down && rm -rf "$LOCK"      # or the project's own teardown command
+```
+
+A teardown without the release leaves the task unable to start any stack again; a
+release without the teardown hands the next caller a lock over containers that are
+still up. They are one operation, not two steps.
+
+**A lock is stale only when BOTH hold:** the agterm session recorded in `owner` no
+longer exists, **and** no container of that stack is running (`docker ps`). Then
+`rm -rf "$LOCK"` and retake it — and say in chat that you did. Anything else is a
+live lock held by work you cannot see.
+
+**Every lane takes the lock — branches most of all.** A session branch is exactly
+where the parallel `make up` comes from, so the acquire/release goes **in the
+branch's own prompt**. That is what turns "serialize on the infra" from a wish into
+something the losing branch actually obeys.
+
+**Scope: one lock per worktree.** It serializes every lane *of this task*. Two
+different tasks of the same project have different worktrees and therefore
+different locks. The sibling scan above is what shows another task's stack: its
+`owner` file carries `task=` and `worktree=`. A stack started without a lock does
+not show up there — check `docker ps` when a bring-up fails on a port even though
+the scan was clean.
+
 **1. The infra runs in its OWN standalone agterm session.** One session, holding
 one stack, for the one test run that needs it:
 
 ```bash
-agtermctl session new --cwd "<repo>" --name "<service>-infra" --after "$AGTERM_SESSION_ID" \
-  --no-select --command "zsh -lc 'make up <service>'"
+agtermctl session new --cwd "<repo>" --name "<service>-infra [$b]" --after "$AGTERM_SESSION_ID" \
+  --no-select --command "zsh -lc 'agst make up <service>'"
 ```
 
 `--after "$AGTERM_SESSION_ID"` keeps it in the current workspace, directly below
@@ -489,8 +644,20 @@ focus to a session that just prints container logs interrupts whatever they were
 reading. `make up` may run in the foreground **there**; that is what a session is
 for, and it never blocks the conversation.
 
+**`agst` is what makes that background session readable.** It is the cookbook's
+`long-commands-status` wrapper, installed at `~/bin/agst`: it sets the session's
+sidebar row to **active** while the command runs, then **completed** on exit 0 or
+**blocked** on any non-zero exit. Without it an infra session that died on startup
+looks exactly like a healthy one — you have to open it to find out. Prefix ANY long
+command with it, not just `make up`: `agst make test`, `agst go test ./...`,
+`agst make lint`. It passes the exit code straight through, so it is safe in
+`&&` chains and pipelines, and outside agterm it `exec`s the command with no
+status calls at all. Two limits worth knowing: a command that hangs reads as
+`active` for as long as it hangs, and Ctrl-C kills the wrapper before it can post
+the end state, leaving the row `active`.
+
 **2. The TEST runs from the MAIN session**, in its own context — a backgrounded
-`Bash` call (`run_in_background: true`) or a session **branch** / agent — and is
+`run-background-shell` capability or a session **branch** / agent — and is
 pointed at that infra. Never run the suite inside the infra session, and never run
 the stack inside the main session.
 
@@ -538,9 +705,83 @@ Rules for this loop:
   routine; wiping a volume, dropping a database that holds work, or touching
   anything shared/remote is not — ask first.
 - **`cleanup` closes the task's infra sessions AND its session branches** —
-  `ListAgents` → `TaskStop` each branch, and for every infra session `make down`
+  close each branch through the harness's branch-management facilities, and for every infra session `make down`
   first, then close it. Do it **before** the worktree is deleted (a `make down`
-  needs the compose file).
+  needs the compose file). The `rm -rf` takes `.infra.lock` with the worktree, so
+  a deleted task never orphans a lock — but a `cleanup` that stops early must
+  release it explicitly.
+
+### Cleanup readiness contract
+
+Every project-specific `cleanup` implementation MUST require the following
+before deleting a worktree:
+
+- The planned work is complete. Any removed scope is recorded as `none` or
+  moved to a related task in the project's tracker.
+- All related changes are committed. The task worktrees have no uncommitted
+  files.
+- Every related PR is approved, merged, and has only successful or skipped CI
+  checks. This includes e2e, regression, deploy, and other external checks.
+- Every problem or bug found during development is fixed, or has a new task in
+  the project's configured tracker. A related-task link or issue key is
+  recorded for each follow-up.
+- All task session branches and infra consoles are closed before deletion,
+  and no `.infra.lock` is left holding a stack that is still up.
+- Docker has no running containers for the task worktree. The cleanup flow must
+  stop and remove task-owned containers, networks, and volumes, then verify the
+  result.
+
+The project-specific flow supplies the tracker and CI commands. It must write a
+temporary `.task-cleanup-checklist` at the worktree base with explicit values
+for these checks, validate it, and delete it with the worktree. `--force` may
+skip the guards only after the user explicitly confirms abandoned work or an
+unverifiable local environment.
+
+## Mermaid in markdown — VALIDATE IT BEFORE SHOWING IT (MUST FOLLOW)
+
+Any `.md` you write or edit that contains a ```mermaid block — `PLAN.md`, a
+design doc, an R&D report — MUST have **every** block validated before you open
+plannotator on it, hand it to the user, or commit it. A broken block renders as
+a red "Mermaid Error" box, so the reader sees a parse error instead of the
+diagram, and the gate round-trip is wasted.
+
+Validate by rendering, not by reading. `mmdc` (`@mermaid-js/mermaid-cli`) is the
+checker; if it is missing, install it or say you could not validate — never
+assume a block is fine because it looks fine.
+
+```bash
+python3 - <<'EOF'
+import pathlib, subprocess, tempfile, os, sys
+doc = pathlib.Path("<file>.md")          # the md you just wrote/edited
+lines = doc.read_text().splitlines()
+blocks, cur, start = [], None, 0
+for i, l in enumerate(lines, 1):
+    if l.strip() == "```mermaid": cur, start = [], i
+    elif cur is not None and l.strip() == "```": blocks.append((start, "\n".join(cur))); cur = None
+    elif cur is not None: cur.append(l)
+d, bad = tempfile.mkdtemp(), 0
+for n, (line, body) in enumerate(blocks, 1):
+    f = os.path.join(d, f"b{n}.mmd"); open(f, "w").write(body)
+    r = subprocess.run(["mmdc", "-i", f, "-o", os.path.join(d, f"b{n}.svg")],
+                       capture_output=True, text=True)
+    print(("OK  " if r.returncode == 0 else "FAIL"), f"block {n} ({doc}:{line})")
+    if r.returncode: bad += 1; print((r.stderr or r.stdout).strip()[:400])
+sys.exit(1 if bad else 0)
+EOF
+```
+
+Fix every `FAIL` and re-run until the script exits 0. Only then open plannotator.
+
+**The two that bite most often, both in `sequenceDiagram` message text:**
+
+| Breaks | Why | Write instead |
+|---|---|---|
+| `A->>B: Lock(); delete x; Unlock()` | `;` is a statement separator — the rest parses as new statements | commas, or `<br/>` |
+| `A->>A: block on <-ch` | `<` breaks the parser, and `&lt;` does **not** save it | spell it out: `receive from ch` |
+
+Others worth knowing: `end` alone in a label closes a block; `#` starts a
+comment; a `participant` alias containing `-` or `:` needs quoting. When a label
+genuinely needs punctuation, put it in a `Note over` instead of the message.
 
 ## Plannotator binary (shared)
 
@@ -555,13 +796,14 @@ PLANNOTATOR="${PLANNOTATOR:-$(command -v plannotator || echo "$HOME/.local/bin/p
 
 Every `plannotator …` command below (and in the project skills' `plan` step)
 means `"$PLANNOTATOR" …` with that resolution inlined — shell state does not
-survive between `Bash` calls, so repeat the assignment in each command. On
+survive between `run-background-shell` calls, so repeat the assignment in each
+command. On
 `PLANNOTATOR_NOT_FOUND`, tell the user to install it or to export `PLANNOTATOR`,
 and stop — do not guess another path.
 
 **ALWAYS launch plannotator in the BACKGROUND (MUST FOLLOW).** Every plannotator
 invocation — `review`, `annotate`, `annotate … --gate` — runs with
-`run_in_background: true` on the `Bash` tool call. plannotator blocks until the
+the harness's `run-background-shell` capability. plannotator blocks until the
 user submits, so a foreground call freezes the session: the user cannot type, and
 you cannot answer a question about the diff or plan they are reading. The run
 returns later as a `<task-notification>` carrying the annotations. Never use a
@@ -668,7 +910,7 @@ input: the raw log excerpt / stack trace the ticket was cut from, the real
 request+response payloads and failing ids, the env / build / partner / device it
 happens on, screenshots or the alert that produced the ticket, what "done" means
 when acceptance criteria are absent, or which of two readings is intended. Ask
-ONE short, concrete list (use `AskUserQuestion` when the options are enumerable),
+ONE short, concrete list, using the harness's `ask-user` capability when the options are enumerable,
 then **WAIT** for the answer before planning.
 
 ## Review checkpoint — stop after code changes (MUST FOLLOW)
@@ -727,7 +969,7 @@ change** exists, if the only changes are a plan and/or docs you MUST use
   **markdown** (`PLAN.md` and/or `*.md` docs), with no real code change:
   - **Exactly one `.md`** changed → annotate that file.
   - **Multiple `.md` files** changed → `annotate` opens **one file at a time**,
-    so **ASK the user (`AskUserQuestion`) which single file to open** (list them,
+    so **ASK the user through the harness's `ask-user` capability which single file to open** (list them,
     e.g. `PLAN.md`, `<repo>/docs/rag/rag-rnd.md`). Never silently pick one, and
     never fall back to `review` just to show them all at once.
   - This is a plain annotate — **no `--gate`**; the formal plan-approval gate
@@ -799,7 +1041,7 @@ annotate+annotate, and **not review+annotate together**.
 Do NOT `pkill` / kill / `session close` a running `review` or `annotate` on your
 own — the user may have unsubmitted annotations in it, and force-closing
 **discards that work**. When one is already open and you need a different one (or
-the same one refreshed), use `AskUserQuestion` to let the user decide:
+the same one refreshed), use the harness's `ask-user` capability to let the user decide:
 - **Force-close & open new** — the user authorizes it (e.g. the open tab is
   stale/orphaned or belongs to another session). Only then may you
   `pkill -f "plannotator (review|annotate)"`, confirm it is closed (`pgrep` shows
@@ -819,8 +1061,8 @@ Check whether one is already running before launching (either mode):
 pgrep -f "plannotator (review|annotate)" >/dev/null 2>&1 && echo "ALREADY_RUNNING" || echo "NONE"
 ```
 
-- **`ALREADY_RUNNING`** → do NOT launch a second one. Ask the user
-  (`AskUserQuestion`) whether to **force-close the existing** review/annotation
+- **`ALREADY_RUNNING`** → do NOT launch a second one. Ask the user through the
+  harness's `ask-user` capability whether to **force-close the existing** review/annotation
   and open a new one, or **keep** it and wait until they close it themselves.
   `pkill` ONLY after the user picks force-close; then confirm `pgrep` shows none
   and launch exactly one. Never force-close on your own initiative.
@@ -835,7 +1077,7 @@ cd <worktree-base> && pwd && "$PLANNOTATOR" annotate <chosen.md>
 ```
 
 **Launch it in the BACKGROUND — always (MUST FOLLOW).** Set
-`run_in_background: true` on the `Bash` tool call. plannotator blocks until the
+the harness's `run-background-shell` capability. plannotator blocks until the
 user submits. A foreground call therefore freezes the whole session: the user
 cannot type, and you cannot answer a question about the very diff they are
 reading. Background keeps the conversation usable while the tab is open; the run
@@ -851,7 +1093,7 @@ returns later as a `<task-notification>` carrying the annotations.
 `annotate` takes exactly **one** `.md` path (resolved relative to the worktree
 base — so `PLAN.md`, or a nested `<repo>/docs/…/report.md`). It cannot open
 several at once; that is why multiple changed `.md` files force the
-`AskUserQuestion` pick above rather than a `review`.
+user pick above rather than a `review`.
 
 - Derive `<worktree-base>` from the cwd (the `.worktrees/<branch>/` root, NOT a
   repo subdir) exactly as the `zed`/`code` block does. Run it from the base so
@@ -1021,7 +1263,7 @@ writing code, not about this walkthrough).
 
 ### Step 5 — the pause
 
-After each batch, stop and ask with `AskUserQuestion` — one option per file in
+After each batch, stop and ask through the harness's `ask-user` capability — one option per file in
 the batch plus the continue option (3 files + continue = 4, the maximum):
 
 - `Discuss <file>` — one per file shown in this batch.
@@ -1059,10 +1301,370 @@ lines: files approved, files reworked in this pass, files left with an open
 question. Nothing else — no next-step offers, and (per the rule above) never a
 `cleanup` suggestion.
 
-## `list` / `switch` — handled here (not delegated)
+## `status` / `list` / `switch` — handled here (not delegated)
 
-Both operate on the worktrees under the **project root** from Step 2 (`$root`).
-They run from anywhere — you need not be inside a worktree.
+`list` and `switch` operate on the worktrees under the **project root** from
+Step 2 (`$root`) and run from anywhere. `status` reports on the task the session
+is currently in, and falls back to `$root` for `--all`.
+
+### `status`
+
+**Triggers:** "task status", "status of the task", "where am I", "what's left",
+"what's blocking finish". `--all` switches to the one-row-per-worktree table at
+the end of this section; everything else here is about **the task this session is
+in**.
+
+`list` answers *which worktrees exist*. `status` answers *where this task
+actually is* — which phase it is in, what its PRs and CI are doing, and what
+still stands between it and `finish`. It is a **read**: it never commits, pushes,
+moves a ticket, or opens a PR.
+
+**It renders into a floating agterm overlay panel, not into chat.** The report is
+a wall of state the user wants to glance at and dismiss, and an overlay is a real
+terminal on top of the session that vanishes on quit — chat would bury it in
+scrollback three turns later, and a full-pane overlay would not look like a panel
+at all. Open it with `--size-percent 75` and say ONE line in chat (step 6); never
+re-print the report there. Outside agterm, print the same report in chat.
+
+#### 1. Resolve the task
+
+Derive the worktree base from the cwd — the same derivation the worktree-confinement
+rule uses, so `status` reports on the task this session is confined to:
+
+```bash
+case "$PWD" in
+  */.worktrees/*) root="${PWD%%/.worktrees/*}"; branch="${PWD#*/.worktrees/}"; branch="${branch%%/*}"
+                  WT="$root/.worktrees/$branch" ;;
+  *) WT="" ;;
+esac
+```
+
+No `WT` → this session is not inside a worktree. Say so and offer `--all`; do not
+guess a task.
+
+#### 2. Put a panel up while it gathers
+
+The `gh` calls below are network calls, several of them. A passive panel says what
+is happening without taking the keyboard — the session stays typable under it:
+
+```bash
+agtermctl session hud "collecting task status…" --spinner --position bottom-right \
+  --target "$AGTERM_SESSION_ID" >/dev/null 2>&1 || true
+# … gather …
+agtermctl session hud close --target "$AGTERM_SESSION_ID" >/dev/null 2>&1 || true
+```
+
+#### 3. Gather — every signal guarded, a missing tool is never an error
+
+**Repos.** The worktree base is not itself a git repo; the repos are inside it —
+one for a single-repo project, several for a multi-repo one. A git worktree has
+`.git` as a **FILE**, not a directory, so never test `-d .git`:
+
+```bash
+for repo in "$WT" "$WT"/*/; do
+  git -C "$repo" rev-parse --show-toplevel >/dev/null 2>&1 || continue
+  git -C "$repo" status --porcelain | wc -l                      # dirty files
+  git -C "$repo" rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null  # behind<TAB>ahead
+done
+```
+
+A failing `@{upstream}` means the branch was never pushed — that is a finish
+blocker, not an error.
+
+**The ticket id, generically.** This skill knows no tracker and no prefix. Take the
+id the project's `new` wrote into the agterm session context, and fall back to the
+leading `<letters>-<digits>` of the branch name:
+
+```bash
+ctx="$(agtermctl tree --json 2>/dev/null | python3 -c '
+import sys, json, os
+sid = os.environ.get("AGTERM_SESSION_ID", "")
+d = json.load(sys.stdin)
+for w in d.get("result", {}).get("tree", {}).get("workspaces", []):
+    for s in w.get("sessions", []):
+        if s.get("id", "").lower() == sid.lower():
+            print("\t".join([s.get("context", ""), s.get("status", "idle"),
+                             s.get("foreground", ""), s.get("splitForeground", "")]))
+' 2>/dev/null || true)"
+ticket="$(printf '%s' "$ctx" | cut -f1)"
+[ -n "$ticket" ] || ticket="$(printf '%s' "$branch" | grep -oiE '^[a-z]+-[0-9]+' | tr '[:lower:]' '[:upper:]')"
+```
+
+Report the id only. **Tracker state belongs to the project skill** — this file must
+not learn what a ticket status is called. The same goes for the ticket's URL: this
+file never builds a tracker link and never hardcodes a tracker host. Get the
+canonical URL from the tracker itself — the project's tracker tool returns it with
+the issue (Linear's MCP `get_issue` answers a `url` field; Jira's REST issue gives
+the browse URL) — or from the project skill's stated issue-URL template. Render the
+id as a link when you have one (step 6), as plain text when you do not; never stall
+the report on a tracker call.
+
+**PRs and CI**, per repo, guarded (`gh` may be absent; no PR is not a failure):
+
+```bash
+command -v gh >/dev/null 2>&1 &&
+  ( cd "$repo" && gh pr view "$branch" \
+      --json number,url,state,isDraft,mergeable,reviewDecision,statusCheckRollup 2>/dev/null )
+```
+
+`url` is in that field list so the `pr` cell can be a hyperlink (step 6) — keep it
+there even when you only print the number.
+
+`statusCheckRollup` carries the jobs/actions in the same call — name the failing
+job, do not report "checks failing".
+
+**What is running right now.** `foreground`/`splitForeground` from the block above
+are the live argv of each pane. A sibling session whose `cwd` is under `$WT` is a
+console this task opened (an infra stack, a long test run) — list those too; a
+forgotten infra session is a thing this report exists to surface.
+
+#### 4. Derive the state — from evidence, never from a guess
+
+| state | the evidence that puts it here |
+|---|---|
+| **planning** | a plan doc at the base and no commits on the branch yet, or plannotator/`plan` is the pane foreground |
+| **implementation** | commits or a dirty tree, and no PR in any changed repo |
+| **testing (babysitting)** | a test/build command is a pane foreground, or a sibling console under `$WT` is alive, or PR checks are still pending |
+| **code review** | a PR is open with `reviewDecision` empty or `REVIEW_REQUIRED`, or plannotator `review` is the pane foreground |
+| **finishing** | every changed repo has a PR, checks are green, nothing is merged yet |
+| **blocked** | checks failing, `reviewDecision: CHANGES_REQUESTED`, or `mergeable: CONFLICTING` |
+| **done** | every PR merged, every tree clean, nothing ahead of upstream |
+
+Report the state **and the evidence for it** on the same line. "code review — PR
+#1501 open, no review yet" is checkable; "code review" alone is a claim the user
+has to verify by hand.
+
+When two states both have evidence, report the **later** one and list the earlier
+one's leftovers as blockers — a task with an open PR and a dirty tree is in review
+with uncommitted work, not back in implementation.
+
+#### 5. The `finish` gate — what is stopping it
+
+This is the half of the report that earns the command. Emit one line per blocker,
+each naming the repo and the concrete thing; an empty list is the statement that
+`finish` would go through:
+
+- uncommitted changes in `<repo>` (N files)
+- N commits not pushed in `<repo>` — or no upstream at all
+- `<repo>` has changes on this branch and **no PR**
+- PR #N is a **draft**
+- PR #N checks: `<job>` failing / N pending
+- PR #N `CHANGES_REQUESTED` by review
+- PR #N `CONFLICTING` — needs a rebase
+- PR #N open and unmerged
+- the ticket `<id>` still needs its tracker move — **the project skill owns this**, say the id and say who owns it, do not invent a status name
+
+**One blocker cannot be detected and must be asked, not assumed:** review findings
+that were deferred rather than fixed are supposed to become follow-up tickets, and
+nothing in git or `gh` records that. End the report with the question rather than a
+clean bill of health — "any deferred review findings still to file as follow-ups?"
+
+#### 6. Render it — a floating overlay panel, coloured, tabular
+
+The overlay is a **real pty rendering through the same terminal**, so everything
+the terminal can draw is on the table: ANSI colour, box-drawing, bold and dim. Use
+it. A status board the user opens ten times a day is worth the twenty lines of
+formatting.
+
+**Float it — `--size-percent 75`, never full-pane.** A full-pane overlay covers the
+pane edge to edge, so it is indistinguishable from output printed into the session
+— the user asks "why didn't it open a popup?". A floating panel is framed by
+agterm, with the session visible around it, and it reads as what it is: a board
+you glance at and dismiss.
+
+```bash
+agtermctl session overlay open "zsh -lc 'less -R \"$report\"'" \
+  --target "$AGTERM_SESSION_ID" --size-percent 75 --background-color "#11131a"
+```
+
+`--target "$AGTERM_SESSION_ID"` is not optional: the default is `active`, which is
+whatever session the USER has selected, not yours. `overlay open` is argv run with
+the app's GUI `PATH`, which is why the `zsh -lc` wrapper is there.
+`--background-color` gives the report panel its own ground, independent of the
+session's. `less -R` is the pager because `-R` is what passes the escape sequences
+through; it also buys `/` search and scrolling for free, and quitting it closes the
+overlay.
+
+Do NOT `surface zoom` the overlay and do not reach for `--full`: both undo the
+float. The panel is the deliverable.
+
+**Then say ONE line in chat — never the report again.** The whole point of the
+panel is that the report is not in scrollback. Re-printing it as a markdown table
+after opening the overlay gives the user two renderings of the same thing, the
+second one worse than the first. The chat line is a pointer plus the single
+headline fact, nothing else:
+
+> Status is up in the overlay (`q` to dismiss) — implementation, 3 repos dirty, no PRs yet.
+
+No table, no blocker list, no "done" recap in chat. If the user asks a follow-up
+about one row, answer that row.
+
+**Width: render INSIDE the overlay and take the whole panel.** The panel's real
+width is unknowable while you are gathering — the overlay does not exist yet — so
+a report rendered to a file up front has to guess, and a guess means a truncated
+branch name next to half a panel of empty space. Split it instead: write the
+gathered facts to a small JSON file, and let the overlay run a renderer that reads
+its own terminal size and lays out to it.
+
+```bash
+agtermctl session overlay open \
+  "zsh -lc 'python3 \"$render\" \"$data\" | less -R'" \
+  --target "$AGTERM_SESSION_ID" --size-percent 75 --background-color "#11131a"
+```
+
+Piping into `less` makes stdout a pipe, so `os.get_terminal_size(1)` fails and
+`shutil.get_terminal_size()` silently falls back to 80. Read the tty directly:
+
+```python
+def term_cols(default=100):
+    for fd in (sys.stdout.fileno(), sys.stderr.fileno()):
+        try:    return os.get_terminal_size(fd).columns
+        except OSError: pass
+    try:
+        fd = os.open("/dev/tty", os.O_RDONLY)
+        try:    return os.get_terminal_size(fd).columns
+        finally: os.close(fd)
+    except OSError: return default
+```
+
+Then `WIDTH = max(48, cols - 4)` (a two-space margin each side) is the board's
+width: every rule spans it, and the **name column absorbs the slack** —
+`flex = WIDTH - (fixed columns + gaps)` — so the counts sit at the right edge and
+the branch/repo names get every column that is left. Truncate a cell only when it
+genuinely exceeds that real width, never to meet a number you picked in advance.
+
+**Link everything that can be opened — OSC 8, not bare URLs.** A ticket id and a PR
+number are things the user wants to click, and a pasted `https://…` costs a whole
+column of the board to say what the id already says. agterm renders OSC 8
+hyperlinks, and `less -R` passes them through (verified on less 668), so wrap the
+label instead of printing the URL:
+
+```python
+def link(url, label):
+    if not url:
+        return label
+    return "\033]8;;" + url + "\033\\" + label + "\033]8;;\033\\"
+```
+
+The terminator is ST — ESC followed by ONE backslash (`\033\\` in a Python
+string). Two backslashes emit a literal one and the link silently dies as text.
+
+Link these, and nothing else: the **ticket id** (URL from the project skill), each
+**PR cell** (`url` from the `gh pr view --json` call you already make — add `url`
+to the field list), and a blocker line that names one of them. A repo name and a
+branch name have nowhere to point; leave them plain.
+
+**The width measure must strip OSC 8 too.** A hyperlink is ~60 invisible bytes
+around an 8-column label. `SGR.sub("", s)` does not touch them, so every padded
+cell holding a link over-counts and the row collapses:
+
+```python
+OSC8 = re.compile("\033\\]8;;[^\033]*\033\\\\")
+def w(s): return len(SGR.sub("", OSC8.sub("", s)))
+```
+
+Truncation has the same trap — `clip()` must strip both before slicing, or it cuts
+through the escape and prints the raw URL.
+
+**No outer box.** agterm already frames the panel — a `┌───┐` wrapper inside it is
+a second border around the first, and it is the line most likely to shear. Open
+with a bold title line and a dim rule, then sections.
+
+**Colour: use the 16 ANSI colours, not a hand-picked palette.** They are the ones
+the user's agterm theme defines, so the report inherits whatever theme is set
+instead of fighting it — and it stays readable on a light theme, which a hardcoded
+`#rrggbb` will not. Reserve truecolor (`COLORTERM=truecolor`) for an accent, and
+drop to no colour when the stream is not a TTY (`less` is, a chat fallback is not).
+
+| meaning | colour |
+|---|---|
+| `done`, green checks, in sync | green |
+| `blocked`, failing job, `CHANGES_REQUESTED`, `CONFLICTING` | red |
+| `code review`, pending checks, draft PR | yellow |
+| `testing (babysitting)`, a live foreground command | cyan |
+| `implementation`, `planning` | default, with the state word bold |
+| repo names, branch names, PR urls | dim |
+
+Colour is an accent on text that already says the thing. Never encode a state in
+colour alone — "blocked" prints the word `blocked`, in red; a red row with no word
+is unreadable in a screenshot and to anyone colour-blind.
+
+**Three sections, plain columns, one rule each.** No per-row separators, no grid:
+
+```
+  ENG-2437 · be-checkly-production-checks
+  ────────────────────────────────────────────────────────────────────
+  state   code review — PR #1501 open, no review yet
+
+  repo              dirty  ahead  behind   pr      checks
+  ────────────────────────────────────────────────────────────────────
+  platform              3      2       0   #1501   2✓ 1✗ lint
+  e2e-api-tests         0      1       0   —       —
+
+  blockers
+  ────────────────────────────────────────────────────────────────────
+  ✗  platform: 3 uncommitted files
+  ✗  platform: PR #1501 check `lint` failing
+  ✗  e2e-api-tests: 1 commit on this branch and no PR
+  ?  deferred review findings still to file as follow-ups?
+```
+
+Rules that keep it from breaking:
+
+- **Compute every column width from the content — never hardcode a field width.**
+  `width[i] = max(len(header[i]), max(len(cell[i]) for every row))`, then pad each
+  cell to it with a fixed two-space gap. A hardcoded `{:>5}` that meets a 7-char
+  cell does not clip — it overflows and shoves every column to its right, so three
+  rows line up and two do not. That is the shear the user sees first.
+- **One width for the whole board.** The table's total width (the sum of the
+  computed columns plus the gaps) is also the width of every `────` rule and of the
+  title rule. A rule that disagrees with the rows under it looks broken even when
+  the columns are right.
+- **A numbers column holds digits only.** Annotations (`(dep)`, `(new)`, `WIP`)
+  belong beside the repo name as dim text, never inside the count — they widen a
+  numeric column that the eye reads as a vertical stack of digits.
+- **Pad by display width, not by `len()`.** A `✓`/`✗`/emoji is not one column wide
+  everywhere, and a mis-measured cell shears the whole table. Keep the glyph set
+  narrow and ASCII-safe, or measure with `unicodedata.east_asian_width`.
+- **Strip the escape sequences before measuring**, or colour the cell after it is
+  padded. Padding a string that already carries SGR codes counts the codes.
+- **Right-align the numbers, left-align the names.** A column of counts is scanned
+  vertically; a ragged one is not.
+- **Truncate, never wrap, inside a cell — and only against the measured width.** A
+  wrapped branch name destroys the grid; an elided one (`eng-2437-be-checkly-prod…`)
+  does not. But an ellipsis while the panel still has blank columns to the right is
+  the bug the flex column exists to prevent: it means you truncated to a guess.
+- **Degrade, don't fail.** No `gh` means the `pr`/`checks` columns print `—`, not a
+  missing table.
+
+**Assume no rendering libraries.** `gum`, `glow`, `bat`, `rich` and friends are not
+installed on a given machine and must not become a dependency of a status read —
+python3's stdlib plus SGR escapes draws all of the above. If one of them IS present
+and the user wants it, that is their call to make, not a default to bake in.
+
+Outside agterm (`AGTERM_ENABLED` unset) there is no overlay: print the same report
+in chat as a plain markdown table, no escapes.
+
+#### `status --all`
+
+The fleet view, when the question is "which of my tasks needs me" rather than
+"where is this one". One row per worktree under `$root/.worktrees/`, most recently
+modified first, in chat:
+
+```
+branch                          session              git
+eng-2437-be-checkly-prod        ENG-2437 · active    2 ahead · 3 dirty
+eng-1998-fix-settings-cache     ENG-1998 · idle      clean · in sync
+eng-1750-rng-docs               — no session         5 ahead · no upstream
+```
+
+Match each worktree to its session by **cwd prefix**, not by name — session naming
+is the project's business, but confinement guarantees the cwd stays under the base.
+Call out the two states that are otherwise invisible: **`— no session`** (the
+worktree is on disk, nothing is watching it) and **dirty and/or ahead** (work that
+exists nowhere else yet). A session whose cwd is under `.worktrees/` but whose
+directory is gone is an **orphan session** — report those separately; they are
+sessions to close, not tasks.
 
 ### `list`
 
@@ -1073,6 +1675,8 @@ ls -1d "$root"/.worktrees/*/ 2>/dev/null | xargs -I{} basename {}
 ```
 
 Display as a numbered list. If none, say "No worktrees found."
+Bare names only — when the user wants to know what STATE a task is in, that is
+`status`, not this.
 
 ### `switch`
 
@@ -1080,7 +1684,7 @@ Display as a numbered list. If none, say "No worktrees found."
 
 1. List worktrees (as in `list`, using `$root`). If none → "No worktrees found."
    and stop.
-2. Present them with `AskUserQuestion` (max 4 — if more, show the 4 most recently
+2. Present them through the harness's `ask-user` capability (max 4 — if more, show the 4 most recently
    modified and let the user type "Other").
 3. On selection, **delegate the open to the project** so its worktree wiring runs
    (dep refresh, session naming): invoke the resolved project `:task` skill with
@@ -1089,13 +1693,21 @@ Display as a numbered list. If none, say "No worktrees found."
    `new <existing>` IS the open. Do not run a project's `new-task.sh` directly
    from here; go through the project skill.
 
+If the harness has no `ask-user` capability, present the same flat numbered list in chat
+and wait for the user's selection. Never choose a worktree silently when the choice is
+ambiguous.
+
 ## Adding a new project
 
 1. Give the project's plugin a `task` skill with `user-invocable: false` in its
-   frontmatter (so it stays out of the `/` menu but remains `Skill()`-callable).
+    frontmatter (so it stays out of the `/` menu but remains loadable through the
+    harness's `load-skill` capability).
    It implements only `new` / `plan` / `finish` / `cleanup` (+ its own preflight,
-   layout, definition-of-done); `review` / `changes` / `list` / `switch` / `zed` /
-   `code` / `console` are owned here and need nothing from it.
+   layout, definition-of-done); `review` / `changes` / `status` / `list` /
+   `switch` / `zed` / `code` / `console` are owned here and need nothing from it.
+   `status` reads the ticket **id** off the agterm session context that the
+   project's `new` wrote, and reports it without interpreting it — tracker state
+   stays the project skill's business.
 2. Name the agterm workspace after the plugin — that alone makes Step 2 resolve
    it, with no edit to this file.
 3. For cwd-based resolution outside agterm, add an entry to the **local, unpublished**

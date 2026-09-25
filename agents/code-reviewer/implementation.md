@@ -2,7 +2,8 @@
 name: implementation
 mode: subagent
 description: "Use this agent to review whether an implementation achieves its stated goal or requirement.\n\n<example>\nContext: User has implemented a feature and wants to verify correctness.\nuser: \"I've implemented the payment flow. Does it cover everything?\"\nassistant: \"I'll use the implementation-reviewer agent to verify the implementation covers all requirements and edge cases.\"\n<commentary>Since the user wants to verify implementation completeness, use the implementation-reviewer agent to check requirement coverage and correctness.</commentary>\n</example>\n\n<example>\nContext: User has finished a task from a plan.\nuser: \"Step 3 of the plan is done. Can you verify it?\"\nassistant: \"I'll use the implementation-reviewer agent to verify the implementation matches the requirements from step 3.\"\n<commentary>Use the implementation-reviewer to verify implementation against stated requirements.</commentary>\n</example>"
-model: opus
+model: sonnet
+effort: high
 ---
 
 Review whether the implementation achieves the stated goal/requirement.

@@ -87,6 +87,25 @@ out entirely, not set to `nil`.
 
 ### Comments
 
+**SCOPE — these rules apply to HAND-WRITTEN Go only. Generated files are exempt
+(MUST FOLLOW).** Never strip, rewrite, or "clean up" a comment in a generated
+file, and never file a comment finding against one. Its comments are produced by
+the generator; editing them is lost on the next `go generate` / `make gen-*` run,
+and it puts a hand edit into a file nobody reviews. A file is generated when any
+of these hold:
+
+- it carries the standard header `// Code generated ... DO NOT EDIT.` (this is
+  the authoritative test — `grep -l '^// Code generated .* DO NOT EDIT\.'`);
+- it is a moq/mockery mock (`**/mocks/*.go`), a protobuf/gRPC stub (`*.pb.go`,
+  `*_grpc.pb.go`), an OpenAPI/`oapi-codegen` API package, a `gen/` query-builder
+  package, or a `*_gen.go` / `*_generated.go` file;
+- it lives under `vendor/`.
+
+If the generator's output is wrong, change the generator, its template, or its
+config — never the emitted file. The only comment rule that still binds here is
+the one about your own additions: do not hand-add a comment to a generated file
+either.
+
 **READ THIS FIRST — the #1 repeated violation.** No comment block above a query
 / filter predicate, a struct-tag line, a migration DDL, or a single added
 condition. Do NOT "explain the WHERE clause", the new `AND x > 0`, or why a
@@ -240,6 +259,31 @@ if err := h.images.EnsureCached(ctx, games); err != nil {
     log.Error().Ctx(ctx).Err(err).Msg("cannot record image sources for game list")
 }
 ```
+
+**Comments that must NEVER exist.** These are not judgement calls — delete them
+on sight, in your own code and in any hand-written code you touch (generated
+files stay untouched — see **SCOPE** above):
+
+- **Section banners and dividers** — `// ---- helpers ----`, `// === handlers ===`,
+  `//////// public API ////////`. A file that needs signposting needs splitting.
+- **Change-log comments** — `// new`, `// added for ENG-123`, `// was: oldName`,
+  `// changed to fix the race`. Git holds the history; the comment is stale the
+  moment the next change lands.
+- **TODOs about work this change already finished.** A TODO is only for work
+  that is genuinely still open, and then it names who/what, not "improve later".
+- **Commented-out code.** Delete it. `git log` and `git revert` are how you get
+  it back — a dead block is noise every reader must first classify as dead.
+
+**A stale comment is worse than no comment.** A comment that no longer matches
+the code it sits on actively misleads: the reader trusts it, the code does
+something else, and the bug hides in the gap. So when you touch a line, the
+comment above it is part of what you touched — fix it or delete it. Never leave
+a comment describing the code as it was before your edit.
+
+**Never ask for a comment in review.** "Add a doc comment", "document this
+method", "explain this block" are the wrong feedback on Go written to this
+skill. If a hunk is genuinely unreadable, say *rename it*, *split it*, or *let
+the type say it* — the fix is always in the code, never in prose above it.
 
 ### Formatting
 

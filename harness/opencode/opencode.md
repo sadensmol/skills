@@ -23,16 +23,33 @@ The `skill` tool: `skill({ name: "sadensmol-go-programming" })`. Skill ids are f
 namespace-prefixed; there is no colon form. Reading the `SKILL.md` file is not a
 substitute.
 
+The tool does not deduplicate calls. Before calling it, check whether a prior
+`<skill_content name="…">` block for that skill is still present in the current context.
+If present, do not call the tool again; apply those instructions to the current request.
+Reload only when the block is absent, such as in a fresh subagent or after compaction.
+
 ## ask-user
 
-The `question` tool — for clarifying questions and for weighing tradeoffs. Use it for every
-approval gate a skill demands; do not assume consent and continue.
+The `question` tool — for clarifying questions and for weighing tradeoffs. The global
+OpenCode config must explicitly set `"question": "allow"` under `permission`; otherwise
+the tool may not be exposed. Use it for every approval gate a skill demands; do not assume
+consent and continue.
+
+If `question` is absent from the live tool registry, use the same flat numbered choice in
+chat and wait for the user's selection. Never claim that the capability is unavailable
+when the chat fallback can perform the same gate.
 
 ## track-todos
 
 `todowrite`, and it is expected: keep the visible list synchronized with the real state of
 a multi-step flow. A single read-only action does not need a list. Note that `todowrite`
 can be denied by config, in which case keep the plan in your reply.
+
+## browser
+
+Use the existing Chrome DevTools page for browser work. Call `chrome-devtools_list_pages`, select an
+existing page, and navigate it with `chrome-devtools_navigate_page`. Do not call
+`chrome-devtools_new_page` unless the user explicitly asks for a new tab.
 
 ## run-background-shell
 

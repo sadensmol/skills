@@ -7,6 +7,10 @@ You are in Claude Code. This file answers the capability contract in `harness/RE
 The `Skill` tool, with the skill's flat id: `Skill(sadensmol-go-programming)`. Reading the
 `SKILL.md` file instead does not count — the skill must be invoked.
 
+Do not invoke a skill whose full instructions are already present in the current context.
+Apply the existing instructions to the new request. Reload only when they are absent, such
+as in a fresh subagent or after compaction.
+
 ## ask-user
 
 `AskUserQuestion`. Up to 4 questions per call, 2-4 options each, `multiSelect` when the

@@ -5,7 +5,8 @@
 #   install.sh <repo> [<repo> …]
 #
 # Every repository is optional in shape. A repository contributes whatever it
-# has: skills/, agents/, instructions/AGENTS.md, harness/opencode/opencode.md, a plugin.
+# has: skills/, agents/, instructions/AGENTS.md, harness/opencode/opencode.md,
+# harness/codex/install.sh, a plugin.
 # The namespace comes from .claude-plugin/marketplace.json, so nothing here
 # names a specific repository.
 set -euo pipefail
@@ -51,6 +52,9 @@ for repo in "$@"; do
 
   # --- runtime contract for OpenCode, loaded beside the router
   [ -f "$repo/harness/opencode/opencode.md" ] && oc_instructions+=("$repo/harness/opencode/opencode.md")
+
+  # --- Codex: hook, standing instructions, prompts and agents, by its own installer
+  [ -x "$repo/harness/codex/install.sh" ] && "$repo/harness/codex/install.sh" >/dev/null
 
   # --- hooks ship as a Claude Code plugin
   if [ -d "$repo/plugin" ]; then

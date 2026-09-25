@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<style>
+  @page { size: __PAGE_SIZE__; margin: 16mm 14mm 18mm 14mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 9.5pt;
+    line-height: 1.45;
+    color: #1a1d23;
+  }
+  h1, h2, h3 { margin: 0; font-weight: 600; }
+
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16mm; }
+  .head .title { font-size: 22pt; letter-spacing: .04em; text-transform: uppercase; color: #111; }
+  .head .subtitle { margin-top: 2mm; color: #6b7280; font-size: 9pt; }
+  .logo { max-height: 18mm; max-width: 55mm; object-fit: contain; }
+
+  .meta { margin-top: 2mm; border-collapse: collapse; }
+  .meta td { padding: .6mm 0; font-size: 9pt; vertical-align: top; }
+  .meta td.k { color: #6b7280; padding-right: 6mm; white-space: nowrap; }
+  .meta td.v { font-weight: 600; text-align: right; white-space: nowrap; }
+
+  .parties { display: flex; gap: 10mm; margin-top: 10mm; }
+  .party { flex: 1; }
+  .party .label {
+    font-size: 7.5pt; text-transform: uppercase; letter-spacing: .09em;
+    color: #6b7280; margin-bottom: 1.5mm;
+  }
+  .party .name { font-weight: 600; font-size: 10.5pt; }
+  .party .line { color: #374151; }
+
+  table.items { width: 100%; border-collapse: collapse; margin-top: 10mm; }
+  table.items thead th {
+    font-size: 7.5pt; text-transform: uppercase; letter-spacing: .07em;
+    color: #6b7280; font-weight: 600; text-align: left;
+    padding: 0 2.5mm 2mm 2.5mm; border-bottom: .6pt solid #111;
+  }
+  table.items tbody td {
+    padding: 2.4mm 2.5mm; border-bottom: .4pt solid #e5e7eb; vertical-align: top;
+  }
+  table.items tbody tr:last-child td { border-bottom: .4pt solid #e5e7eb; }
+  table.items .sub { display: block; color: #6b7280; font-size: 8.5pt; margin-top: .6mm; }
+  .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* The three numeric columns are sized to their content; `width: 100%` on the
+     description makes it absorb every remaining millimetre, so the text runs to
+     the numbers instead of wrapping early against a column of white space. */
+  table.items .desc { width: 100%; }
+  table.items th:nth-child(2), table.items td:nth-child(2) { width: 1%; }
+  table.items th:nth-child(3), table.items td:nth-child(3) { width: 1%; padding-left: 7mm; }
+  table.items th:nth-child(4), table.items td:nth-child(4) { width: 1%; padding-left: 7mm; }
+
+  .totals { margin-top: 6mm; display: flex; justify-content: flex-end; }
+  table.sum { border-collapse: collapse; min-width: 78mm; }
+  table.sum td { padding: 1.4mm 2.5mm; }
+  table.sum td.k { color: #374151; }
+  table.sum td.v { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.sum tr.grand td {
+    border-top: .8pt solid #111; font-size: 12pt; font-weight: 700; padding-top: 2.4mm;
+  }
+  table.sum tr.due td { color: #6b7280; font-size: 8.5pt; padding-top: 0; }
+
+  .blocks { margin-top: 9mm; display: flex; gap: 10mm; break-inside: avoid; }
+  .block { flex: 1; }
+  .block .label {
+    font-size: 7.5pt; text-transform: uppercase; letter-spacing: .09em;
+    color: #6b7280; margin-bottom: 1.5mm;
+  }
+  table.kv { border-collapse: collapse; width: 100%; }
+  table.kv td { padding: .5mm 0; vertical-align: top; font-size: 8.8pt; }
+  table.kv td.k { color: #6b7280; padding-right: 4mm; white-space: nowrap; width: 1%; }
+  table.kv td.v { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.4pt; word-break: break-all; }
+
+  .notes { margin-top: 8mm; color: #374151; white-space: pre-wrap; }
+  .footer {
+    margin-top: 7mm; padding-top: 2.5mm; border-top: .4pt solid #e5e7eb;
+    color: #9ca3af; font-size: 8pt; white-space: pre-wrap; break-inside: avoid;
+  }
+</style>
+</head>
+<body>
+__BODY__
+</body>
+</html>

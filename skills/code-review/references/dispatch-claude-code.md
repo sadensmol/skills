@@ -8,6 +8,14 @@ Use the `Workflow` tool with the script below. Do not launch the five agents by 
 - **You are already opted in.** The `Workflow` tool refuses to run without explicit user
   opt-in; "the user invoked a skill whose instructions tell you to call Workflow" *is* that
   opt-in. Do not ask for permission.
+- **The model comes from the agent frontmatter — do NOT pass one per call.** The five agent
+  files in `agents/code-reviewer/` carry `model: sonnet` + `effort: high`, which is what this
+  harness reviews on. Those files are **shared with OpenCode** (`~/.config/opencode/agents`
+  symlinks to the same directory), so an `openai/*` model must never be written into them: it
+  belongs in OpenCode's own `opencode.jsonc`, whose per-agent `model`/`variant` overrides the
+  frontmatter anyway. A fan-out that fails with "There's an issue with the selected model"
+  means that rule was broken — fix the frontmatter rather than overriding `model` in the
+  script.
 - **Findings come back structured**, so the report is assembled from data rather than from
   five prose blobs.
 - **It runs in the background.** It returns a run id immediately and a task notification
@@ -73,10 +81,10 @@ const REVIEWERS = [
   {
     area: 'Quality',
     type: 'quality',
-    focus: 'bugs, security issues, and code quality. You also own the linter — no other reviewer runs it. Find the lint command in the project docs or Makefile, run it, and report only hits in changed files, in the `linter` field',
-    p0: 'Security vulnerabilities, linter errors, race conditions, resource leaks, crashes or panics.',
-    p1: 'Linter warnings, quality issues, missing error handling, compatibility risks.',
-    p2: 'Style improvements, minor refactors, non-critical linter suggestions.',
+    focus: 'bugs, security issues, and code quality. You also own the linter — no other reviewer runs it. Find the lint command in the project docs or Makefile, run it, and report only hits in changed files, in the `linter` field. You also own junk comments — no other reviewer reports them: flag every comment this diff ADDS to a HAND-WRITTEN file that restates the code below it, narrates an obvious constructor/getter/field/const, banners a section, talks about the change itself, or is commented-out code. Generated files are exempt — skip them',
+    p0: 'Security vulnerabilities, linter errors, race conditions, resource leaks, crashes or panics, or a comment that is factually wrong about the code it sits on.',
+    p1: 'Linter warnings, quality issues, missing error handling, compatibility risks, junk comments the diff adds.',
+    p2: 'Style improvements, minor refactors, non-critical linter suggestions, merely redundant comments.',
   },
   {
     area: 'Simplification',
@@ -123,6 +131,13 @@ const brief = (r) => {
     `P0 — ${r.p0}`,
     `P1 — ${r.p1}`,
     `P2 — ${r.p2}`,
+    ``,
+    `## Comments`,
+    `NEVER file a finding whose fix is "add a comment", "add a doc comment", "document this", or "explain this block". Code is self-explanatory by default; the fix for an unreadable hunk is a better name, a smaller function, or a clearer type — never a sentence about it.`,
+    `GENERATED FILES ARE EXEMPT from every comment rule: never file a comment finding against a file carrying "Code generated ... DO NOT EDIT." (or its language's equivalent), a mock (**/mocks/*), a protobuf/gRPC stub (*.pb.go, *_grpc.pb.go, *.pb.dart), an OpenAPI/codegen API package, a gen/ package, *_gen.go / *.g.dart / *.freezed.dart, a lockfile, or anything under vendor/. Their comments come from the generator; a hand edit there is wiped on the next regeneration. If the output is wrong, the finding is against the generator, template, or config.`,
+    r.area === 'Quality'
+      ? `You alone report junk comments the diff ADDS in hand-written files: restating the code, narrating an obvious declaration, section banners, notes about the change itself, commented-out code. P1 by default, P2 when merely redundant, P0 when the comment is wrong about its code.`
+      : `Junk comments the diff adds belong to the Quality reviewer. Do not report them.`,
     ``,
     `## Output`,
     `Return findings through the schema. Problems only — no positive observations, no summary of what the change does.`,

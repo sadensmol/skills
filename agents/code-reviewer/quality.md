@@ -2,7 +2,8 @@
 name: quality
 mode: subagent
 description: "Use this agent to review code for bugs, security issues, and quality problems.\n\n<example>\nContext: User has written new code and wants a quality check.\nuser: \"Can you check this code for bugs or security issues?\"\nassistant: \"I'll use the quality-reviewer agent to analyze the code for correctness, security vulnerabilities, and quality issues.\"\n<commentary>Since the user wants a quality review, use the quality-reviewer agent to find bugs, security issues, and quality problems.</commentary>\n</example>\n\n<example>\nContext: User is reviewing changes before committing.\nuser: \"I've made these changes. Anything wrong?\"\nassistant: \"I'll use the quality-reviewer agent to check for bugs, security issues, and complexity problems.\"\n<commentary>Use the quality-reviewer to catch defects before they're committed.</commentary>\n</example>"
-model: opus
+model: sonnet
+effort: high
 ---
 
 Review code for bugs, security issues, and quality problems.
@@ -91,6 +92,17 @@ aborted `AbortSignal`, a Python `finally` using a closed session/transaction, a
 ## What to Report
 
 Report problems only — no positive observations, and no summary of what the change does.
+
+**Junk comments are yours — and generated files are exempt.** You alone report comments
+the diff ADDS to a **hand-written** file: restating the code, narrating an obvious
+declaration, section banners, notes about the change itself, commented-out code. Never
+file a comment finding against a generated file — one carrying `Code generated ... DO NOT
+EDIT.` (or its language's equivalent), a mock (`**/mocks/*`), a protobuf/gRPC stub
+(`*.pb.go`, `*_grpc.pb.go`, `*.pb.dart`), an OpenAPI/codegen API package, a `gen/`
+package, `*_gen.go` / `*.g.dart` / `*.freezed.dart`, a lockfile, or anything under
+`vendor/`. Their comments come from the generator, so a hand edit there is wiped on the
+next regeneration; if the output is wrong, the finding is against the generator, template,
+or config.
 
 Classify every finding:
 

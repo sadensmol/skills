@@ -3,6 +3,7 @@
 ## Skills
 
 - NEVER EVER SKIP SKILLS. If a skill applies to the task, invoke it BEFORE doing anything else — no exceptions, no rationalizing.
+- **Skill loading is idempotent within the current context.** If the skill's full instructions are already present, treat it as loaded and do not invoke or read it again. Apply the existing instructions to the new request. A new user request alone never justifies reloading. Load it again only when its instructions are absent, such as in a fresh subagent or after compaction removed them.
 
 ## Answering (HARD RULE — OVERRIDES EVERY SKILL AND DEFAULT)
 

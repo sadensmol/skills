@@ -71,6 +71,29 @@ To update, pass `id` plus only the fields you're changing. Common fields:
 
 Always confirm with the user before changing `state`/`assignee` on an issue you didn't just create — these are visible to the team.
 
+### Create an issue
+
+**Follow the project-level skill first.** If a `<project>-linear` (or equivalent project)
+skill is loaded, its rules for status, cycle, estimate, title format, project/milestone and
+labels win — this skill only supplies the mechanics. Read it before the create call, and pass
+every field it mandates **in the create call itself**.
+
+**Assignee default: `"me"`.** When the request names nobody, set `assignee: "me"` — never
+leave a new issue unassigned. Pass a different person only when the user names one (resolve
+with `list_users` if only a first name is given).
+
+**Every issue belongs to a project.** Never create one with `project` unset. Resolve it in
+this order:
+
+1. **It has a parent** → `get_issue` the parent and copy its `project` (and `milestone`). A
+   subtask in a different project than its story is a mistake, not a choice.
+2. **No parent** → pick the project whose subject matches the work. `list_projects` (filter
+   by `team`) shows the options; the project-level skill usually names the routing rule.
+3. **Still ambiguous** → ask the user which project, and name the two or three candidates.
+   Do not create the issue project-less "for now".
+
+Skip completed / archived / canceled projects — a new ticket goes in an active one.
+
 ### Add a subtask to an existing issue
 
 Subtasks are just regular issues with `parent` set. Create with `save_issue` (no `id`):
@@ -79,7 +102,7 @@ Subtasks are just regular issues with `parent` set. Create with `save_issue` (no
 - `parent` — parent UUID or identifier (e.g. `"<PREFIX>-123"`).
 - `title` — required.
 - `description` — optional markdown.
-- `assignee` — optional; default to `"me"` only if the user said "assign to me".
+- `assignee` — defaults to `"me"` whenever the request names nobody.
 - `state` — optional; defaults to the team's default status (`Triage`/`Backlog`).
 
 Verify the parent exists with `get_issue` first if you're not sure of the identifier. Return the new identifier (`<PREFIX>-###`) and URL to the user.

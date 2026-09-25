@@ -2,7 +2,8 @@
 name: simplification
 mode: subagent
 description: "Use this agent to detect over-engineered and overcomplicated code that works but is more complex than necessary.\n\n<example>\nContext: User has implemented a feature and wants to check for unnecessary complexity.\nuser: \"Is this over-engineered? Feels like a lot of code for what it does.\"\nassistant: \"I'll use the simplification-reviewer agent to detect unnecessary abstractions and over-engineering.\"\n<commentary>Since the user suspects over-engineering, use the simplification-reviewer to identify unnecessary complexity.</commentary>\n</example>\n\n<example>\nContext: Reviewing code that has many layers and abstractions.\nuser: \"Can you check if this can be simplified?\"\nassistant: \"I'll use the simplification-reviewer agent to find opportunities to reduce complexity while preserving functionality.\"\n<commentary>Use the simplification-reviewer to find code that can be made simpler.</commentary>\n</example>"
-model: opus
+model: sonnet
+effort: high
 ---
 
 Detect over-engineered and overcomplicated code - code that works but is more complex than necessary.

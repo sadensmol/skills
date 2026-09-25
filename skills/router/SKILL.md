@@ -298,7 +298,7 @@ plugin that owns it:
 
 | Bare name | project session | plain personal / other |
 |---|---|---|
-| `task` | `<project>-task` | — (sadensmol has no `task`) |
+| `task` | `sadensmol-task` base + `<project>-task` | — (no project task flow) |
 | `linear` | `<project>-linear` if it defines one (+ `sadensmol-linear` base), else `sadensmol-linear` | `sadensmol-linear` |
 | `router` | `<project>-router` | `sadensmol-router` |
 
@@ -308,9 +308,12 @@ base. So:
 
 - If the session belongs to a project workspace whose plugin defines the name →
   that namespace's version wins; defer to its router (it is delivered on its own,
-  by the same mechanism as this one). When the project skill *layers on* the sadensmol base (e.g.
-  `<project>-linear` over `sadensmol-linear`), **both** load — sadensmol supplies
-  base mechanics, the project skill supplies the overrides.
+  by the same mechanism as this one). Whenever a project skill has a related
+  `sadensmol-<name>` base, load the base **before** the project skill, even for a
+  direct/fully-qualified invocation. This includes `sadensmol-task` before
+  `<project>-task` (shared workflow/dispatcher), as well as `sadensmol-linear`
+  before `<project>-linear`. Skip bases that are absent or unrelated; the two
+  routers are independent passes, not a project/base skill pair.
 - Otherwise (a plain personal / sadensmol session, or the owning project plugin
   doesn't define the name) → the `sadensmol-` version wins; if the harness
   pre-loaded another plugin's `<name>`, override to `sadensmol-<name>`.
@@ -369,6 +372,7 @@ The initial pass is not "once and forget". Re-evaluate Sections B, C, D, G, H ag
 - **The task turns into designing NEW functionality, or a LARGE restructuring refactor** — re-run Section G's two lists and load `sadensmol-programming-patterns` only if the positive list matches AND nothing on the negative list does. Drift also runs the other way: a session that started as design and became debugging, test writing, or bug fixing must NOT gain this skill, and any pattern advice already in flight stops there.
 - **You are about to run your FIRST `git` command of the session** — any git command, including read-only ones (`status`, `diff`, `log`, `branch`) — **or any bulk automated edit** (mass `sed -i`, a codemod, a tree-wide `--fix`, deleting a directory) — confirm `sadensmol-git` is loaded first, per Section H. This fires in every session type, including debugging and bug fixing. It does NOT fire on a turn that never touches git.
 - **The user invokes a bare colliding skill name (`/task`, `/linear`, `/router`, or any name shared across the personal plugins)** — resolve it per Section I by the session's workspace (project plugin overrides sadensmol, layering on its base) before invoking, and override any wrong-plugin version the harness pre-loaded.
+- **You are about to load a project skill with a related `sadensmol-` base, including a direct `<project>-task` load** — load its base first per Section I; a project skill already loaded does not excuse a missing base.
 
 You don't need to re-run the full Step 1 bash block on drift — just check whether the skill the new action would benefit from is already loaded, and load it if it isn't. **Invoke it with your harness's skill tool (never just read the SKILL.md file).** Loading a skill on drift is cheaper than producing code that violates its rules.
 

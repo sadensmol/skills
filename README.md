@@ -27,6 +27,12 @@ body. All three harnesses read that format, so the same folder serves all of the
 ├── harness/                          one runtime file per harness
 │   ├── README.md                     the capability contract skills refer to
 │   ├── claude-code.md                injected by the plugin's hook
+│   ├── codex/
+│   │   ├── codex.md                  injected by the UserPromptSubmit hook
+│   │   ├── router-inject.sh          that hook — Codex reads a hook's stdout as JSON
+│   │   ├── install.sh                writes the hook, links AGENTS.md and the commands,
+│   │   │                             generates the agents as TOML
+│   │   └── install.test.sh           its checks; hermetic, no Codex needed
 │   └── opencode/
 │       ├── opencode.md               injected through the config's `instructions`
 │       ├── install.sh                writes that entry into the config
@@ -104,24 +110,39 @@ they also find the NVIDIA sub-skills bundled inside
 
 ### Codex and OpenCode
 
+Both find skills in the same tree, so that link is made once:
+
 ```bash
 mkdir -p ~/.agents/skills
 ln -s "$PWD/skills" ~/.agents/skills/sadensmol
-ln -s "$PWD/agents" ~/.config/opencode/agents
+```
+
+One link per namespace. Codex reads `~/.agents/skills` on its own, and OpenCode searches
+`.agents/skills` at project and global level. Everything else differs, and each harness has
+an installer for its own side:
+
+```bash
+harness/codex/install.sh       # hook, AGENTS.md, commands, agents
+harness/opencode/install.sh    # instructions, skills.paths
+ln -s "$PWD/agents" ~/.config/opencode/agents            # OpenCode reads the markdown ones
 rm -f ~/.config/opencode/AGENTS.md
 ln -s "$PWD/instructions/AGENTS.md" ~/.config/opencode/AGENTS.md
 ```
 
-One link per namespace. Codex reads `~/.agents/skills` on its own, and OpenCode searches
-`.agents/skills` at project and global level. OpenCode also needs the router in its config,
-because it has no hook to inject one; the installer writes that entry and points the tree
-out explicitly at the same time:
+OpenCode needs the router in its config because it has no hook to inject one; the installer
+writes that entry and points the skills tree out explicitly at the same time. Codex does
+have hooks, so its installer writes one, and covers three more things Codex cannot work out
+for itself: `~/.codex/AGENTS.md` -> `instructions/AGENTS.md`, `commands/*.md` linked into
+`~/.codex/prompts/`, and `agents/` generated into `~/.codex/agents/*.toml`, because a Codex
+custom agent is TOML (`name`, `description`, `developer_instructions`) and cannot be the
+markdown file the other two read.
 
-```bash
-harness/opencode/install.sh
-```
+**Codex skips a new or changed hook until it is trusted.** After the first run, and after
+any edit to `router-inject.sh`, open Codex and run `/hooks` to trust the entry — until then
+the router is not injected and nothing says so.
 
-See [The always-on router](#the-always-on-router) for what it does and does not touch.
+See [The always-on router](#the-always-on-router) for what the installers do and do not
+touch.
 
 ### Short commands
 
@@ -138,17 +159,22 @@ for f in "$PWD"/commands/*.md; do                      # /task, /retro, /learn
 done
 ```
 
-Both harnesses take the command name from the **filename**, read `description` from the
+Codex's copies are linked by `harness/codex/install.sh`, into `~/.codex/prompts/`, so they
+are not in the loop above.
+
+All three take the command name from the **filename**, read `description` from the
 frontmatter for the `/` menu, and substitute the user's arguments for `$ARGUMENTS` in the
-body. So one file serves both, the same way one `SKILL.md` does.
+body. So one file serves all of them, the same way one `SKILL.md` does. Codex offers them
+under a prefix — `task.md` is `/prompts:task` there, `/task` in the other two.
 
 See [Adding a command](#adding-a-command) for how to add the next one.
 
 ### Standing instructions
 
-`instructions/AGENTS.md` is the one copy of the standing instructions. Both harnesses read it
-through a symlink — Claude Code as `~/.claude/CLAUDE.md`, OpenCode as
-`~/.config/opencode/AGENTS.md` — so an edit lands in both at once and neither can drift.
+`instructions/AGENTS.md` is the one copy of the standing instructions. All three harnesses
+read it through a symlink — Claude Code as `~/.claude/CLAUDE.md`, Codex as
+`~/.codex/AGENTS.md`, OpenCode as `~/.config/opencode/AGENTS.md` — so an edit lands in all
+of them at once and none can drift.
 It holds nothing harness-specific: rules that apply to only one runtime go in that
 harness's file under `harness/`, which is in context there anyway.
 
@@ -164,7 +190,23 @@ here loads automatically. Each harness delivers it differently, and both are set
 | Harness | Mechanism | Frequency |
 | --- | --- | --- |
 | Claude Code | the plugin's `UserPromptSubmit` hook runs `skill-activation.sh`, which prints the router **and `harness/claude-code.md`** | every prompt |
+| Codex | the `UserPromptSubmit` hook in `~/.codex/hooks.json` runs `harness/codex/router-inject.sh`, which prints the router **and `harness/codex/codex.md`** | every prompt |
 | OpenCode | `instructions` in `~/.config/opencode/opencode.json`, listing the router **and `harness/opencode/opencode.md`** | once per session, in the system prompt |
+
+Codex's hook is the same event as Claude Code's, but not the same contract, and
+`skill-activation.sh` does **not** work there unchanged: Codex parses a hook's stdout as
+JSON and takes the model-visible text from `hookSpecificOutput.additionalContext`, so plain
+text is a parse error rather than context. It also caps that text at ~2500 tokens and
+spills the rest to a file, which would cut the router in half — the installed handler
+therefore sets `additionalContextLimit: 0`. Hence a second injector,
+`harness/codex/router-inject.sh`, rather than a shared one.
+
+Its installer owns one handler and nothing else: other hook events, anyone else's
+`UserPromptSubmit` hook, and every other key in `hooks.json` are carried through untouched,
+a `.bak` is kept, and an unparseable file is refused rather than rewritten. A real
+`~/.codex/AGENTS.md` you wrote yourself is moved to `AGENTS.md.bak` rather than destroyed,
+and a hand-written `~/.codex/agents/*.toml` is never removed — only the files the generator
+stamped as its own.
 
 There is no hook on the OpenCode side, so that entry has to be in the config. Write it with
 the installer, which is why `harness/opencode/` is a folder:
@@ -172,6 +214,8 @@ the installer, which is why `harness/opencode/` is a folder:
 ```bash
 harness/opencode/install.sh            # --dry-run prints the merged config instead
 harness/opencode/install.test.sh       # its checks: every case runs against a throwaway HOME
+harness/codex/install.sh               # --dry-run prints the merged hooks.json instead
+harness/codex/install.test.sh          # the same, for the Codex side and its injector
 ```
 
 It owns two keys and nothing else — `instructions` and `skills.paths` — the same ground the
@@ -199,8 +243,9 @@ so it keeps working across updates:
 Skills are harness-neutral prose. What differs between harnesses is mechanical — how to run
 something in the background, launch and stop a subagent, fan out, ask the user, keep a todo
 list, isolate work — and those are properties of the harness, not of the skill. They are
-written once each in `harness/claude-code.md` and `harness/opencode/opencode.md`, against the
-capability contract in [harness/README.md](harness/README.md).
+written once each in `harness/claude-code.md`, `harness/codex/codex.md` and
+`harness/opencode/opencode.md`, against the capability contract in
+[harness/README.md](harness/README.md).
 
 A skill therefore says "fan out one reviewer per area" or "run this as a background
 subagent", never `Agent` or `task`. Whichever runtime file is in context is the harness you
@@ -213,17 +258,28 @@ default, needs `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before it will 
 one, offers no orchestration script, no stop tool and no worktree tool, and expects
 `todowrite` to be kept live — which Claude Code does not have in this build at all.
 
-Codex is not wired up. It supports the same `UserPromptSubmit` hook as Claude Code, and
-`skill-activation.sh` already works there unchanged, but no `hooks.json` for it ships here
-yet.
+Codex is a third shape again. It has no skill tool at all: skills arrive as a catalog of
+names, descriptions and paths, and loading one means reading that `SKILL.md` and following
+it. It delegates with `spawn_agent` / `wait_agent` / `interrupt_agent`, asks with
+`request_user_input` (absent in `codex exec`), keeps a plan with `update_plan`, backgrounds
+a command through unified exec rather than a job flag, and has no worktree tool. It also
+tells the model not to delegate unless the user, `AGENTS.md`, or a skill asks — which a
+skill saying "fan out" does.
 
 ### Agents
 
-`agents/` works the same way, and subfolders are free: Claude Code scans `~/.claude/agents`
-recursively and takes a subagent's identity from the frontmatter `name`, OpenCode scans
-`{agent,agents}/**/*.md` and takes it from the filename. Keep the two equal and the id is
-the same in both — `agents/code-reviewer/quality.md` with `name: quality` is the agent
-`quality`. The folder groups them for humans and never enters the id.
+`agents/` works the same way for two of the three, and subfolders are free: Claude Code
+scans `~/.claude/agents` recursively and takes a subagent's identity from the frontmatter
+`name`, OpenCode scans `{agent,agents}/**/*.md` and takes it from the filename. Keep the two
+equal and the id is the same in both — `agents/code-reviewer/quality.md` with `name:
+quality` is the agent `quality`. The folder groups them for humans and never enters the id.
+
+Codex is the exception: a custom agent there is a TOML file in `~/.codex/agents/` with
+`name`, `description` and `developer_instructions`, so the markdown cannot simply be linked.
+`harness/codex/install.sh` generates one TOML per markdown agent, keeping the same id, and
+drops the frontmatter keys that mean nothing there (`mode`, and `model` — a Claude model
+slug is not a Codex one). They are generated files: after editing an agent, re-run that
+installer.
 
 Two frontmatter rules, both verified against the harnesses:
 
@@ -242,10 +298,12 @@ the whole point: the skill keeps its namespaced id, and the user types a short n
 | Harness | Command directory | Name comes from | Arguments |
 | --- | --- | --- | --- |
 | Claude Code | `~/.claude/commands/` | the filename (`task.md` -> `/task`) | `$ARGUMENTS` |
+| Codex | `~/.codex/prompts/` | the filename (`task.md` -> `/prompts:task`) | `$ARGUMENTS` |
 | OpenCode | `~/.config/opencode/command/` | the filename (`task.md` -> `/task`) | `$ARGUMENTS` |
 
 Same filename, same frontmatter key, same placeholder — so one file in `commands/` is
-linked into both and there is nothing per-harness to keep in sync.
+linked into all three and there is nothing per-harness to keep in sync. Codex scans only
+the top level of `prompts/`, which the flat `commands/` folder already satisfies.
 
 To add `/<name>` for the skill `sadensmol-<skill>`:
 
@@ -256,9 +314,11 @@ To add `/<name>` for the skill `sadensmol-<skill>`:
    description: One line, shown in the `/` menu
    ---
 
-   Invoke the `sadensmol-<skill>` skill now. Your harness runtime file answers
-   `load-skill` and says how to invoke a skill here; reading the `SKILL.md` file is not
-   a substitute.
+   Ensure the `sadensmol-<skill>` skill is loaded. If its full instructions are already
+   present in the current conversation context, do not invoke it again; apply those
+   instructions to this request. Otherwise, invoke it now. Your harness runtime file
+   answers `load-skill` and says how to invoke a skill here; reading the `SKILL.md` file
+   is not a substitute.
 
    Forward the argument string below to it **verbatim**:
 
@@ -268,15 +328,19 @@ To add `/<name>` for the skill `sadensmol-<skill>`:
 2. Re-run the command link loop from [Short commands](#short-commands). `ln -sf` is
    idempotent, so it costs nothing to run it again.
 
-Four rules, each of them load-bearing:
+Five rules, each of them load-bearing:
 
 - **Keep `description` as the only frontmatter key.** Claude Code accepts more
-  (`argument-hint`, `allowed-tools`, `model`); OpenCode has its own set (`agent`,
-  `subtask`). Anything outside the intersection is a key one harness does not expect, so
-  the portable file carries just the one both read.
+  (`argument-hint`, `allowed-tools`, `model`); Codex reads `description` and
+  `argument-hint`; OpenCode has its own set (`agent`, `subtask`). Anything outside the
+  intersection is a key some harness does not expect, so the portable file carries just the
+  one all three read.
 - **Name the skill, never a tool.** The body says "invoke the skill" and points at the
   runtime file for `load-skill`, exactly as a `SKILL.md` would — a command is not exempt
   from the no-harness-tool-names rule.
+- **Do not reload an already-loaded skill.** Commands run on every invocation, but a skill's
+  full instructions persist across requests while they remain in context. Ensure the skill
+  is loaded, then reuse it; a new command invocation alone is not a reload trigger.
 - **Say what not to do before the skill loads.** A command is text the model may act on
   directly; without that line it will happily start the work itself and skip the skill.
 - **Do not claim a name another namespace owns.** `/task` is safe because
@@ -289,18 +353,19 @@ Four rules, each of them load-bearing:
 Editing a skill needs no refresh: every harness reads through a symlink into this clone,
 so the change is live in the next session. Only these cases need an action.
 
-| What changed | Claude Code | Codex, OpenCode |
-| --- | --- | --- |
-| A `SKILL.md` or a reference file | nothing | nothing |
-| A new skill folder | re-run the link loop from *Install* — it is idempotent | nothing |
-| A skill renamed or deleted | re-run the loop, then `rm ~/.claude/skills/<old-name>` | nothing |
-| An agent in `agents/` | nothing | nothing |
-| `instructions/AGENTS.md` | nothing — the destination is a symlink | nothing — same symlink |
-| A new agent file | nothing — the whole directory is linked | nothing |
-| A `commands/*.md` body | nothing — both destinations are symlinks | nothing — same symlink |
-| A new command file | re-run the command link loop from *Install* — `ln -sf` is idempotent | re-run the same loop |
-| A command renamed or deleted | re-run the loop, then `rm ~/.claude/commands/<old>.md ~/.config/opencode/command/<old>.md` | same |
-| `plugin/hooks/` | bump `version` in `plugin/.claude-plugin/plugin.json`, then `claude plugin marketplace update sadensmol` and `claude plugin update sadensmol` | not applicable |
+| What changed | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- |
+| A `SKILL.md` or a reference file | nothing | nothing | nothing |
+| A new skill folder | re-run the link loop from *Install* — it is idempotent | nothing | nothing |
+| A skill renamed or deleted | re-run the loop, then `rm ~/.claude/skills/<old-name>` | nothing | nothing |
+| An agent in `agents/` | nothing | re-run `harness/codex/install.sh` — the TOML is generated | nothing |
+| A new agent file | nothing — the whole directory is linked | re-run `harness/codex/install.sh` | nothing |
+| `instructions/AGENTS.md` | nothing — the destination is a symlink | nothing — same symlink | nothing — same symlink |
+| A `commands/*.md` body | nothing — the destination is a symlink | nothing — same symlink | nothing — same symlink |
+| A new command file | re-run the command link loop from *Install* — `ln -sf` is idempotent | re-run `harness/codex/install.sh` | re-run the same loop |
+| A command renamed or deleted | re-run the loop, then `rm ~/.claude/commands/<old>.md` | re-run the installer, then `rm ~/.codex/prompts/<old>.md` | re-run the loop, then `rm ~/.config/opencode/command/<old>.md` |
+| `harness/codex/router-inject.sh` | not applicable | re-run the installer if it moved, then trust it again with `/hooks` | not applicable |
+| `plugin/hooks/` | bump `version` in `plugin/.claude-plugin/plugin.json`, then `claude plugin marketplace update sadensmol` and `claude plugin update sadensmol` | not applicable | not applicable |
 
 After `git pull`, apply the rows that match what the commits changed. Nothing else is
 needed, because the working tree is what every harness reads.
@@ -327,6 +392,7 @@ Commands:
 | Harness | Global | Project |
 | --- | --- | --- |
 | Claude Code | `~/.claude/commands` | `.claude/commands` |
+| Codex | `~/.codex/prompts` (top level only) | — |
 | OpenCode | `~/.config/opencode/command` | `.opencode/command` |
 
 ## Checking your work
@@ -344,11 +410,12 @@ docker compose -f test/compose.yaml run --rm test
 ```
 
 They install this repository into a throwaway container the way *Install* above
-says to, then assert that both harnesses resolve every skill from this
-repository and that an edit made through either harness's install path lands
+says to, then assert that all three harnesses resolve every skill from this
+repository and that an edit made through a harness's install path lands
 back here. The repository is mounted read-only and copied inside first, so a run
 cannot write to your working tree. No login and no model calls are involved —
-both CLIs are driven through their offline introspection commands. Details and
+the CLIs are driven through their offline introspection commands (`opencode debug
+skill`, `codex debug prompt-input`, the Claude Code hook itself). Details and
 the full check list: [test/README.md](test/README.md).
 
 ## Rules for this repo

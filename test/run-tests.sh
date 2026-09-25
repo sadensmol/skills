@@ -137,6 +137,52 @@ if [ -x "$REPO/harness/opencode/install.test.sh" ]; then
   fi
 fi
 
+# -------------------------------------------------------- B2. Codex wiring ----
+group "Codex"
+
+# Codex finds the skills itself under ~/.agents/skills — the same link OpenCode
+# uses — and prints everything it would send the model, offline and without auth.
+codex debug prompt-input "probe" > /tmp/codex-prompt.json 2>/tmp/codex-prompt.err
+if jq -e . /tmp/codex-prompt.json >/dev/null 2>&1; then
+  jq -r '[.[].content[]?.text?] | join("\n")' /tmp/codex-prompt.json > /tmp/codex-prompt.txt
+  missing=0; outside=0
+  for d in "${SKILL_DIRS[@]}"; do
+    n="$(skill_name "$d")"
+    line="$(grep -m1 -F -- "- $n: " /tmp/codex-prompt.txt)" || { missing=$((missing+1)); continue; }
+    case "$line" in *"/$NS/$(basename "$d")/SKILL.md"*) ;; *) outside=$((outside+1));; esac
+  done
+  [ "$missing" -eq 0 ] && ok "codex resolves every skill (${#SKILL_DIRS[@]})" || bad "codex resolves every skill" "$missing missing — see /tmp/codex-prompt.txt"
+  [ "$outside" -eq 0 ] && ok "codex reads them from this repository's namespace" || bad "codex reads them from this repository's namespace" "$outside from elsewhere"
+  [ -n "$INSTR_REPO" ] && assert_has /tmp/codex-prompt.txt "AGENTS.md instructions" "codex loads the standing instructions"
+else
+  bad "codex debug prompt-input returns JSON" "$(tail -2 /tmp/codex-prompt.err)"
+fi
+
+if [ -f "$REPO/harness/codex/install.sh" ]; then
+  assert_has "$HOME/.codex/hooks.json" "harness/codex/router-inject.sh" "the UserPromptSubmit hook is installed"
+  [ -n "$INSTR_REPO" ] && assert_link "$HOME/.codex/AGENTS.md" "$INSTR_REPO/instructions/AGENTS.md" "AGENTS.md -> instructions/AGENTS.md"
+  for f in "$REPO"/commands/*.md; do
+    [ -f "$f" ] || continue
+    assert_link "$HOME/.codex/prompts/$(basename "$f")" "$f" "command $(basename "$f" .md) is linked as a prompt"
+  done
+  if [ -n "$AGENTS_REPO" ]; then
+    want="$(find "$AGENTS_REPO/agents" -name '*.md' | wc -l)"
+    got="$(find "$HOME/.codex/agents" -name '*.toml' 2>/dev/null | wc -l)"
+    [ "$got" -eq "$want" ] && ok "every agent is generated as TOML ($want)" || bad "every agent is generated as TOML" "$got of $want"
+  fi
+
+  # The hook and merge have their own hermetic checks — each case runs the
+  # installer against a throwaway HOME, so none of them touch the install above.
+  if [ -x "$REPO/harness/codex/install.test.sh" ]; then
+    if "$REPO/harness/codex/install.test.sh" > /tmp/codex-install-test.txt 2>&1; then
+      ok "harness/codex/install.sh: $(tail -1 /tmp/codex-install-test.txt)"
+    else
+      bad "harness/codex/install.sh: $(tail -1 /tmp/codex-install-test.txt)" \
+          "$(grep -c '✗' /tmp/codex-install-test.txt) failing — see /tmp/codex-install-test.txt"
+    fi
+  fi
+fi
+
 # ----------------------------------------------------------- C. validity ----
 group "Validity"
 
@@ -210,7 +256,7 @@ jq -r '.[].name' /tmp/oc-skills.json | grep -qx "$NS-zz-container-probe" \
 
 rm -rf "$probe" "$HOME/.claude/skills/$NS-zz-container-probe"
 
-dangling="$(find -L "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude" -maxdepth 2 -type l 2>/dev/null | tr '\n' ' ')"
+dangling="$(find -L "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.claude" "$HOME/.codex" -maxdepth 2 -type l 2>/dev/null | tr '\n' ' ')"
 [ -z "$dangling" ] && ok "no dangling links are left behind" || bad "no dangling links are left behind" "$dangling"
 
 # ------------------------------------------- F. repository-specific ----

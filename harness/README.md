@@ -10,6 +10,7 @@ Each harness injects its own file the same way it injects the router:
 | Harness | Injected by |
 | --- | --- |
 | Claude Code | the plugin's `UserPromptSubmit` hook, after the router |
+| Codex | `harness/codex/router-inject.sh`, the `UserPromptSubmit` hook in `~/.codex/hooks.json`, after the router |
 | OpenCode | the `instructions` list in `opencode.json`, beside the router |
 
 So no detection is needed: whichever file is in context is the harness you are in.
@@ -21,7 +22,7 @@ the capability is absent.
 
 | Capability | Meaning |
 | --- | --- |
-| `load-skill` | Bring another skill's instructions into context |
+| `load-skill` | Bring another skill's instructions into context once, then reuse them while they remain present |
 | `ask-user` | Put a short choice or question to the user and wait |
 | `track-todos` | Keep a visible, live task list |
 | `run-background-shell` | Start a long-running command, keep working, collect it later |
@@ -33,3 +34,9 @@ the capability is absent.
 
 A skill never names a tool. It says "fan out one reviewer per area" or "run plannotator as
 a background subagent", and the harness file says what that means here.
+
+`load-skill` is idempotent at the instruction layer. Before loading a skill, check whether
+its full instructions are already present in the current conversation context. If they are,
+do not invoke the tool or read the file again; apply the existing instructions to the new
+request. Reload only when the instructions are absent, such as in a fresh context or after
+compaction removed them. The harness may not enforce this mechanically.
