@@ -22,6 +22,14 @@ Use the `Workflow` tool with the script below. Do not launch the five agents by 
   when it finishes; `/workflows` shows live progress.
 - **If the `Workflow` tool is unavailable**, launch the same five agents with the `Agent`
   tool in a **single message**, using the same briefs.
+- **In pair mode (you are the pair WRITER), do not use `Workflow`.** It notifies only once,
+  when all five are done, so the pair reviewer could not discuss each report as it lands.
+  Launch the five agents with the `Agent` tool in a **single message**, all in the
+  background. Each one's `subagent_type` is its `type` in `REVIEWERS`, and its prompt is
+  the text `brief()` below builds, filled in by hand from your inputs. Add to each brief:
+  end with the findings as a JSON object in the `FINDINGS_SCHEMA` shape. Each agent notifies
+  you when it finishes: hand its findings to the pair reviewer then, as `pair.md` says.
+  An agent that fails or returns no usable JSON is recorded as failed for its area.
 
 ## The review workflow
 

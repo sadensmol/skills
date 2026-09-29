@@ -28,3 +28,8 @@ them alone.
    said so in the report. Do not silently drop an area, and do not re-run the whole fan-out
    to paper over one branch.
 5. Assemble the tables yourself, in the order and format `SKILL.md` requires.
+
+**In pair mode (you are the pair WRITER)**, hand each reviewer's findings to the pair
+reviewer as soon as you have them, as `pair.md` says. With background subagents, do it
+as each one finishes. Without them, all five return together: send one report per area,
+in the order above, without waiting for a reply between them.

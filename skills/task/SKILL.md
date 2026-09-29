@@ -1,6 +1,6 @@
 ---
 name: sadensmol-task
-description: "Single entry point for project task/worktree management across the personal plugins. Dispatches `/task <subcommand>` to the correct project's task skill (`<project>-task`) based on the active agterm workspace (authoritative) or the cwd. Use when the user says: \"task new <branch>\", \"new task\", \"task plan\", \"task list\", \"task status\", \"task switch\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task finish\", \"task cleanup\", \"create worktree\", or a bare \"/task …\". Forwards all arguments verbatim to the resolved project skill — it never runs task work itself."
+description: "Single entry point for project task/worktree management across the personal plugins. Dispatches `/task SUBCOMMAND` to the correct project's task skill (`PROJECT-task`) based on the active agterm workspace (authoritative) or the cwd. Use when the user says: \"task new BRANCH\", \"new task\", \"task plan\", \"task list\", \"task status\", \"task switch\", \"task switch --pair\", \"task pair\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task finish\", \"task cleanup\", \"create worktree\", or a bare \"/task …\". Forwards all arguments verbatim to the resolved project skill — it never runs task work itself."
 ---
 
 # Task (dispatcher)
@@ -117,7 +117,7 @@ guess a path, and never ask a skill to hand you one.
 ## Step 3 — delegate, or handle here
 
 **Handled here (do NOT delegate):** `zed`, `code`, `console`, `review`,
-`changes`, `status`, `list`, `switch` — see the "handled here" sections below.
+`changes`, `status`, `list`, `switch`, `pair` — see the "handled here" sections below.
 `zed`/`code`/`console`/`review`/`changes`/`status`
 work off the cwd (the current worktree); `list`/`switch` and `status --all` use
 the **project root** from Step 2.
@@ -427,6 +427,88 @@ the user `console` needs agterm and stop.
 workspace, so the new session lands in the current workspace directly below the
 task session. Never pass `--workspace`/`--workspace-name` instead, and never omit
 the anchor — a console that appears at the end of some other workspace is lost.
+
+## Pair mode (`task new <branch> --pair`)
+
+`--pair` makes the project's `new-task.sh` open the task session as a split. A
+**writer** agent (the driver, the only one that edits) runs in the left pane, and a
+read-only **reviewer** of the other agent kind (the navigator) runs in the right pane
+(Claude Code ↔ OpenCode). Without `--pair` nothing changes.
+
+**Pair mode is pair programming (MUST FOLLOW).** Every decision (approach, new file or
+type, where code lives, what it reuses, how to do a user request, accepting or rejecting
+a finding) is made by both agents BEFORE the writer types it: the writer frames the
+problem only, each agent forms its own view without seeing the other's, and the writer
+merges the two; the reviewer agrees only after it names the strongest objection it
+checked. A user request or question, in either pane, goes through the same loop before
+the user gets an answer. A disagreement after two exchanges goes to the user; the writer never settles it
+alone. `pair.md` → *The decision loop* has the steps. A user message that only runs a
+command, subcommand or skill (`/task finish`, `task plan`, "run the tests") is not a
+decision: the agent runs it at once and sends the peer `FYI: running <command>`.
+A worktree that already has `.pair/config.json` re-opens in pair mode by itself.
+
+**Ask the mode when a task starts (MUST FOLLOW).** A task starts when `new` is about
+to create its worktree — `<root>/.worktrees/<branch>/` does not exist yet. At that
+point, when the arguments carry neither `--pair` nor `--single`, the project skill asks
+the user through the harness's `ask-user` capability, before it runs `new-task.sh`:
+
+- `Single` — one agent. Run the script without a mode flag.
+- `Pair` — writer + reviewer. Run the script with `--pair`.
+
+The first run records the mode: `.pair/config.json` at the worktree base means pair,
+and no `.pair/` means single. Every later open of that worktree reuses the recorded
+mode, so it never asks again. This covers `switch`, `new <existing-branch>`, and a
+re-run after a closed session. `--single` is an explicit answer and skips the
+question; it never removes `.pair/` from a paired worktree.
+
+- The protocol both agents follow is [`pair.md`](pair.md). Each agent gets its path in
+  its start brief.
+- The generic mechanics live in `scripts/pair.py`:
+  - `init`: create `.pair/`;
+  - `brief`: the start text for a role;
+  - `launch`: split, reviewer start, lookup of the session OpenCode created from its
+    `--prompt` (OpenCode always starts with a first prompt, never on its start screen);
+  - `send` / `wait` / `status`: the mailbox;
+  - `thread open|send|resume|wait|close` / `threads`: one decision per thread, discussed with
+    a reviewer subagent (an OpenCode child session) in parallel with other threads
+    (`pair.md` → *Threads*);
+  - `user-prompt`: the `UserPromptSubmit` hook of a Claude Code agent. It forwards each
+    user message to the peer, so the pair discusses every message. `init` writes its
+    settings to `.pair/claude-<role>-settings.json`, and a project's `new-task.sh` MUST
+    start a Claude writer with `--settings` pointing at that file.
+  - `session-start`: the `SessionStart` hook (matcher `clear`) in the same settings
+    file. After `/clear` it stops the stale waiter, refocuses an OpenCode peer's pane
+    and re-arms the agent. `wait` also retires the stale waiter of its role.
+  - `pair-opencode-plugin.js`: loaded by the reviewer's OpenCode config. It keeps the
+    pane on the pair session after a `/new` there and forwards the user's text to it.
+- A project's `new-task.sh` calls `pair.py init` and `brief` before `agtermctl session
+  new`, and `pair.py launch` after it. It calls them only when it creates the session,
+  never for an existing one.
+- `.pair/` lives at the worktree base. Cleanup removes it with the base.
+
+**Turning pair mode on for an existing task** — `task switch --pair` (pick the task)
+or `task pair` (the task of the current worktree). Both delegate `new <branch> --pair`
+to the project skill:
+
+- No live session → it opens as a new pair-mode session.
+- A live session that is already paired → it is only selected.
+- A live session without a reviewer → it is **replaced**: `pair.py respawn` opens a
+  new session right after it and closes the old one. The writer in the new session
+  continues its previous conversation (`claude --continue` / `opencode --continue`),
+  and the reviewer starts with the catch-up brief. The script refuses while that
+  writer is busy, unless the request comes from the writer itself (the same
+  session). Tell the user the old session is being replaced before you run it.
+
+### `pair`
+
+**Triggers:** "task pair", "turn on pair mode", "continue this task in pair mode".
+
+Resolve the current worktree's branch from the cwd, exactly as `console` derives
+`$branch`. Outside a worktree, say `task pair` must run from inside one (or use
+`task switch --pair`) and stop. Then invoke the resolved project `:task` skill with
+args `new <branch> --pair`.
+
+Triggers: "task new <branch> --pair", "new task with a reviewer", "pair mode".
 
 ## Session branches — every parallel unit of work runs in a BRANCH (MUST FOLLOW)
 
@@ -863,6 +945,9 @@ gone by the time you resume.
   code and say so in one line when you report at the end.
 - The task turned out larger than expected. Scaling it down is not your call —
   finish it.
+
+**Pair mode:** waiting for the reviewer's `VIEW:` or its answer to a `MERGE:` is not stopping. End
+the turn when no read-only work is left; the background `pair.py wait` wakes you.
 
 **Stop ONLY when the user genuinely has to decide.** Those cases are:
 
@@ -1680,7 +1765,7 @@ Bare names only — when the user wants to know what STATE a task is in, that is
 
 ### `switch`
 
-**Triggers:** "task switch", "switch task".
+**Triggers:** "task switch", "switch task", "task switch --pair", "switch to <task> in pair mode".
 
 1. List worktrees (as in `list`, using `$root`). If none → "No worktrees found."
    and stop.
@@ -1688,10 +1773,15 @@ Bare names only — when the user wants to know what STATE a task is in, that is
    modified and let the user type "Other").
 3. On selection, **delegate the open to the project** so its worktree wiring runs
    (dep refresh, session naming): invoke the resolved project `:task` skill with
-   args `new <selected-branch>`. Every project's `new` treats an already-existing
+   args `new <selected-branch>` — or `new <selected-branch> --pair` for
+   `task switch --pair` (see *Pair mode*). Every project's `new` treats an already-existing
    branch as a switch (reuse it, plain claude, no new branch, no auto-plan) — so
    `new <existing>` IS the open. Do not run a project's `new-task.sh` directly
    from here; go through the project skill.
+4. **`switch` resumes the task in the mode it was started in (MUST FOLLOW).** Do not
+   ask single or pair, and do not add a mode flag to plain `task switch`. The
+   worktree's recorded mode decides it (see *Pair mode*): a paired worktree re-opens
+   paired, and a single one re-opens single. Only `task switch --pair` changes it.
 
 If the harness has no `ask-user` capability, present the same flat numbered list in chat
 and wait for the user's selection. Never choose a worktree silently when the choice is

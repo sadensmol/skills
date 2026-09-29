@@ -207,6 +207,12 @@ inputs:
 Pass `args` as a real JSON object, never as a JSON-encoded string. Then wait for the
 completion notification and collect the returned reports.
 
+**Pair mode** — the worktree base has `.pair/config.json` and your start brief made you
+the WRITER. Then each subagent's findings go to the pair reviewer as that subagent
+returns, and you present the report only after every finding has a common decision.
+Follow the *Code review* section of the task skill's `pair.md` (its path is in your start
+brief). Your harness's dispatch reference says how to get the findings per subagent.
+
 ### 3. Present results
 
 Assemble one report from the workflow's return value plus your own **[Hygiene]**

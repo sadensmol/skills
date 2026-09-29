@@ -47,9 +47,14 @@ can be denied by config, in which case keep the plan in your reply.
 
 ## browser
 
-Use the existing Chrome DevTools page for browser work. Call `chrome-devtools_list_pages`, select an
-existing page, and navigate it with `chrome-devtools_navigate_page`. Do not call
-`chrome-devtools_new_page` unless the user explicitly asks for a new tab.
+Use Playwright MCP with `--extension` to access the user's open browser tabs and their
+authenticated sessions. Choose the workspace-specific server when one is configured
+(for example, `playwright-swipegames`); otherwise use `playwright-extension`. Call its
+`browser_tabs` tool to list and select an existing tab, then navigate that tab with its
+`browser_navigate` tool. Do not create or close a tab unless the user explicitly requests
+it. A profile-specific `PLAYWRIGHT_MCP_EXTENSION_TOKEN` bypasses connection approval but
+does not install the extension. Never fall back to Chrome DevTools or a separate browser
+profile for an authenticated page.
 
 ## run-background-shell
 
