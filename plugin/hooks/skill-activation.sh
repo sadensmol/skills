@@ -1,7 +1,7 @@
 #!/bin/sh
 # UserPromptSubmit hook — router injector.
 #
-# Fires on EVERY request. Injects the FULL sadensmol-router SKILL.md into
+# Fires on EVERY request. Injects the sadensmol-router SKILL.md (in full) into
 # context every turn, so the routing rules are ALWAYS present regardless of
 # whether the Skill tool was ever invoked. This closes the failure mode where
 # Claude assumes "a router already ran" and skips the routing pass — leaving
@@ -27,6 +27,8 @@ printf '%s\n\n' '<SKILL_ACTIVATION_REQUIRED priority="override-default-behavior"
 printf '%s\n\n' 'EXTREMELY IMPORTANT: The sadensmol-router rules are reproduced IN FULL below and are therefore ALWAYS in context. Evaluate them against the current cwd and prompt NOW, and invoke (via the Skill tool) EVERY downstream skill they name that is not already loaded — BEFORE reading files, editing, running tools, or answering. A different router having run is NOT this router having run; never assume routing is already handled or was cached.'
 
 if [ -n "$ROUTER" ]; then
+  # The router points at on-demand files by relative path; say where they resolve.
+  printf '%s\n\n' "(\`references/…\` paths below are relative to $(cd "$(dirname "$ROUTER")" 2>/dev/null && pwd -P))"
   cat "$ROUTER"
 else
   printf '%s\n' 'router SKILL.md not found in any install location — invoke the `sadensmol-router` skill now if it is not already loaded.'

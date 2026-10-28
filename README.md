@@ -21,12 +21,18 @@ body. All three harnesses read that format, so the same folder serves all of the
 ├── commands/                         short slash-command aliases for skills
 │   ├── task.md                       /task -> the `sadensmol-task` skill
 │   ├── retro.md                      /retro -> `sadensmol-retro`
+│   ├── cleanup.md                    /cleanup -> `sadensmol-cleanup`
 │   └── learn.md                      /learn -> `sadensmol-learn`
 ├── instructions/
 │   └── AGENTS.md                     standing instructions, every harness reads this one
 ├── harness/                          one runtime file per harness
 │   ├── README.md                     the capability contract skills refer to
 │   ├── claude-code.md                injected by the plugin's hook
+│   ├── claude-code/
+│   │   ├── statusline.sh             status line: task mode (Planning/Main/Review), model, context %, effort
+│   │   ├── subagent-statusline.sh    subagent rows: tier (Runner/Planner/Main), model
+│   │   ├── install.sh                points statusLine + subagentStatusLine at them
+│   │   └── install.test.sh           its checks; hermetic, no Claude Code needed
 │   ├── codex/
 │   │   ├── codex.md                  injected by the UserPromptSubmit hook
 │   │   ├── router-inject.sh          that hook — Codex reads a hook's stdout as JSON
@@ -35,8 +41,11 @@ body. All three harnesses read that format, so the same folder serves all of the
 │   │   └── install.test.sh           its checks; hermetic, no Codex needed
 │   └── opencode/
 │       ├── opencode.md               injected through the config's `instructions`
-│       ├── install.sh                writes that entry into the config
-│       └── install.test.sh           its checks; hermetic, no OpenCode needed
+│       ├── install.sh                writes that entry into the config, and the
+│       │                             TUI plugin into tui.json
+│       ├── install.test.sh           its checks; hermetic, no OpenCode needed
+│       └── tui/codex-resets/         TUI plugin: Codex limit reset countdown by the prompt;
+│                                     index.js is built from the .tsx (npm run build)
 ├── test/                             container checks for the whole install
 │   ├── Dockerfile                    both harness CLIs
 │   └── run-tests.sh                  the assertions
@@ -123,7 +132,8 @@ an installer for its own side:
 
 ```bash
 harness/codex/install.sh       # hook, AGENTS.md, commands, agents
-harness/opencode/install.sh    # instructions, skills.paths
+harness/opencode/install.sh    # instructions, skills.paths, the TUI plugin in tui.json
+harness/claude-code/install.sh # statusLine, subagentStatusLine
 ln -s "$PWD/agents" ~/.config/opencode/agents            # OpenCode reads the markdown ones
 rm -f ~/.config/opencode/AGENTS.md
 ln -s "$PWD/instructions/AGENTS.md" ~/.config/opencode/AGENTS.md
@@ -216,14 +226,31 @@ harness/opencode/install.sh            # --dry-run prints the merged config inst
 harness/opencode/install.test.sh       # its checks: every case runs against a throwaway HOME
 harness/codex/install.sh               # --dry-run prints the merged hooks.json instead
 harness/codex/install.test.sh          # the same, for the Codex side and its injector
+harness/claude-code/install.test.sh    # the status line merge and both status line scripts
 ```
 
-It owns two keys and nothing else — `instructions` and `skills.paths` — the same ground the
+It owns two keys of the config — `instructions` and `skills.paths` — the same ground the
 plugin's hook covers on the Claude Code side. Your `agent`, `permission`, `model` and `mcp`
 blocks are left alone, other namespaces' routers already in `instructions` are kept, and an
 entry from an earlier location of the runtime file is replaced rather than duplicated. It
 edits whichever of `opencode.jsonc` / `opencode.json` already exists, keeps a `.bak`, and
-refuses to touch a `.jsonc` that has real comments in it, since `jq` cannot parse one.
+refuses to touch a `.jsonc` that has real comments in it, since `jq` cannot parse one. It
+only warns when the `planning` or `main` agent the task skill starts on is missing. It also
+appends the repository's TUI plugin (`tui/codex-resets`) to the `plugin` list of `tui.json`,
+keeping every other plugin there.
+
+To register one MCP that selects its settings from the active agterm workspace:
+
+```bash
+harness/opencode/install.sh --workspace-mcp <server-name>
+```
+
+The helper reads `~/.agents/skills/<workspace>/<server-name>/opencode.json`.
+Each private project supplies an OpenCode `mcp` object with a local server command.
+Use separate `MCP_REMOTE_CONFIG_DIR` values for accounts that share a remote URL.
+The helper expands `{env:NAME}` in the server's environment and uses the workspace,
+never the current folder. An unknown workspace stops instead of using another account.
+Keep credentials in the auth store, not the settings. Restart OpenCode after installation.
 
 The result is the two entries below. The router goes in through the symlink, not the clone,
 so it keeps working across updates:

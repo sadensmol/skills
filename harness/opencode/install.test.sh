@@ -137,5 +137,80 @@ run "$h" >/dev/null 2>&1
 eq "$(jq -r '.instructions | length' "$h/.config/opencode/opencode.jsonc")" "2" "both spellings: the .jsonc gets the entries"
 eq "$(cat "$h/.config/opencode/opencode.json")" '{"lsp": true}' "both spellings: the .json is left alone"
 
+# --- 10. the TUI plugin is registered in tui.json, other plugins kept ---------
+PLUGIN_URL="file://$REPO/harness/opencode/tui/codex-resets"
+h="$(new_home)"; tui="$h/.config/opencode/tui.json"
+jq -n --arg stale "file://$REPO/harness/opencode/tui/old-plugin" \
+  '{theme: "system", plugin: ["file:///elsewhere/plugin", $stale]}' > "$tui"
+run "$h" >/dev/null 2>&1
+eq "$(jq -r '.plugin | join(",")' "$tui")" "file:///elsewhere/plugin,$PLUGIN_URL" \
+   "tui.json: foreign plugin kept, stale harness/ entry dropped, ours appended"
+eq "$(jq -r .theme "$tui")" "system" "tui.json: other keys untouched"
+[ -f "$tui.bak" ] && ok "tui.json: leaves a .bak" || bad "tui.json: leaves a .bak"
+run "$h" >/dev/null 2>&1
+eq "$(jq -r '.plugin | length' "$tui")" "2" "tui.json: idempotent"
+
+h="$(new_home)"; tui="$h/.config/opencode/tui.json"
+run "$h" >/dev/null 2>&1
+eq "$(jq -r '.plugin | join(",")' "$tui" 2>/dev/null)" "$PLUGIN_URL" "tui.json: created when missing"
+
+h="$(new_home)"; tui="$h/.config/opencode/tui.json"; echo '{"theme": "system"}' > "$tui"
+run "$h" --dry-run >/dev/null 2>&1
+eq "$(cat "$tui")" '{"theme": "system"}' "tui.json: --dry-run leaves it unchanged"
+
+h="$(new_home)"; tui="$h/.config/opencode/tui.json"; cfg="$h/.config/opencode/opencode.json"
+echo '{ broken' > "$tui"; echo '{"lsp": true}' > "$cfg"
+run "$h" >/dev/null 2>&1; rc=$?
+eq "$rc" "1" "unparseable tui.json: exits non-zero"
+eq "$(cat "$cfg")" '{"lsp": true}' "unparseable tui.json: opencode config not half-written"
+
+# --- 11. missing task agents are reported, never written ----------------------
+h="$(new_home)"; cfg="$h/.config/opencode/opencode.json"
+echo '{"agent": {"main": {"model": "someprovider/some-model"}}}' > "$cfg"
+out="$(run "$h" 2>&1)"
+case "$out" in *'no "planning" agent'*) ok "agents: a missing planning agent is reported" ;;
+               *) bad "agents: a missing planning agent is reported" "$out" ;; esac
+case "$out" in *'no "main" agent'*) bad "agents: a present main agent is not reported" "$out" ;;
+               *) ok "agents: a present main agent is not reported" ;; esac
+eq "$(jq -c .agent "$cfg")" '{"main":{"model":"someprovider/some-model"}}' "agents: the agent block is not written"
+
+# One MCP name delegates to workspace-specific settings.
+h="$(new_home)"; cfg="$h/.config/opencode/opencode.json"
+echo '{"model":"provider/model","mcp":{"existing":{"type":"remote","url":"https://existing.example/mcp"}}}' > "$cfg"
+out="$(run "$h" --workspace-mcp tracker 2>&1)"; rc=$?
+eq "$rc" "0" "workspace MCP: exits 0"
+eq "$(jq -r '.mcp | keys | join(",")' "$cfg")" "existing,tracker" "workspace MCP: one entry, existing server kept"
+eq "$(jq -r '.mcp.tracker.command | join(",")' "$cfg")" "python3,$REPO/harness/opencode/workspace-mcp.py,tracker" "workspace MCP: delegates to repository helper"
+eq "$(jq -r .model "$cfg")" "provider/model" "workspace MCP: other settings kept"
+once="$(cat "$cfg")"
+run "$h" --workspace-mcp tracker >/dev/null 2>&1
+eq "$(cat "$cfg")" "$once" "workspace MCP: idempotent"
+out="$(run "$h" --workspace-mcp extra --dry-run 2>/dev/null)"
+eq "$(printf '%s' "$out" | jq -r .mcp.extra.type)" "local" "workspace MCP: dry-run shows entry"
+eq "$(cat "$cfg")" "$once" "workspace MCP: dry-run leaves config unchanged"
+run "$h" --workspace-mcp '../invalid' >/dev/null 2>&1; rc=$?
+eq "$rc" "1" "workspace MCP: invalid name refused"
+eq "$(cat "$cfg")" "$once" "workspace MCP: invalid input leaves config unchanged"
+
+# Fake workspaces prove that cwd never selects the account and stores stay apart.
+mkdir -p "$h/bin" "$h/.agents/skills/alpha/tracker" "$h/.agents/skills/beta/tracker"
+cat > "$h/bin/agtermctl" <<'SH'
+#!/bin/sh
+echo '{"result":{"tree":{"workspaces":[{"id":"a","name":"alpha"},{"id":"b","name":"beta"}]}}}'
+SH
+chmod +x "$h/bin/agtermctl"
+for project in alpha beta; do
+  jq -n --arg project "$project" '{mcp:{tracker:{type:"local",command:["sh","-c","printf '\''%s'\'' \"$MCP_REMOTE_CONFIG_DIR\""],environment:{MCP_REMOTE_CONFIG_DIR:("{env:HOME}/.mcp-auth/" + $project)}}}}' \
+    > "$h/.agents/skills/$project/tracker/opencode.json"
+done
+out="$(HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=a python3 "$REPO/harness/opencode/workspace-mcp.py" tracker 2>/dev/null)"
+eq "$out" "$h/.mcp-auth/alpha" "workspace MCP: first workspace selects its auth store"
+out="$(HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=b python3 "$REPO/harness/opencode/workspace-mcp.py" tracker 2>/dev/null)"
+eq "$out" "$h/.mcp-auth/beta" "workspace MCP: second workspace selects a separate store"
+HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=missing python3 "$REPO/harness/opencode/workspace-mcp.py" tracker >/dev/null 2>&1; rc=$?
+eq "$rc" "1" "workspace MCP: unknown workspace cannot use another account"
+HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID='' python3 "$REPO/harness/opencode/workspace-mcp.py" tracker >/dev/null 2>&1; rc=$?
+eq "$rc" "1" "workspace MCP: missing workspace stops instead of choosing an account"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

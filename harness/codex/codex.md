@@ -59,14 +59,27 @@ a file when you need all of it. The user sees these under `/ps` and can end them
 ## spawn-subagent
 
 `spawn_agent`. The built-in agents are `default`, `worker` and `explorer`; the reviewers in
-`agents/code-reviewer/` are installed as custom agents (`quality`, `testing`,
-`documentation`, `implementation`, `simplification`), so a skill that names one gets it by
+`agents/code-reviewer/` are installed as custom agents (`quality`, `security`,
+`testing`, `documentation`, `implementation`, `simplification`), so a skill that names one gets it by
 that name. `fork_turns` decides how much of your context the child inherits,
 `followup_task` gives a running agent more work, and `send_message` passes it something
 without triggering a turn.
 
 Codex tells you not to delegate unless the user, `AGENTS.md`, or a skill asks for it. A
 skill that says "fan out" or "run this as a subagent" **is** that instruction — follow it.
+
+## cheap-subagent
+
+This file documents no per-call model choice for `spawn_agent`: use `spawn-subagent` on
+the default model, with `fork_turns` at 0 so the child starts from its brief.
+
+## planner-subagent
+
+The same as `cheap-subagent`: `spawn-subagent` on the default model, `fork_turns` at 0.
+
+## main-subagent
+
+The same as `cheap-subagent`: `spawn-subagent` on the default model, `fork_turns` at 0.
 
 ## fan-out
 

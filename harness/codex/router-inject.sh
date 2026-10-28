@@ -48,6 +48,7 @@ CONTEXT="$(
   printf '%s\n\n' "EXTREMELY IMPORTANT: The ${NS:-sadensmol}-router rules are reproduced IN FULL below and are therefore ALWAYS in context. Evaluate them against the current cwd and prompt NOW, and load EVERY downstream skill they name that is not already loaded — BEFORE reading files, editing, running tools, or answering. A different router having run is NOT this router having run; never assume routing is already handled or was cached."
 
   if [ -n "$ROUTER" ]; then
+    printf '%s\n\n' "(\`references/…\` paths below are relative to $(cd "$(dirname "$ROUTER")" 2>/dev/null && pwd -P))"
     cat "$ROUTER"
   else
     printf '%s\n' "router SKILL.md not found in any install location — read and follow \`${NS:-sadensmol}-router\` from the skills list now if it is not already loaded."

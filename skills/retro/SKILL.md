@@ -35,6 +35,8 @@ Before delegation, create a sanitized review set:
 
 - Preserve user requests, agent responses, tool calls, errors, retries, and rework messages.
 - Remove tokens, passwords, cookies, private keys, authorization headers, and unrelated personal data.
+  Key-name patterns are not enough: also mask bare opaque tokens (24+ characters mixing upper case,
+  lower case and digits, outside paths) and quoted shell assignments such as `T='…'`.
 - Keep timestamps and turn boundaries so reviewers can cite evidence.
 - Pass the same bounded, sanitized review set from both runtimes to exactly ten reviewers.
 

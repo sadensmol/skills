@@ -211,7 +211,44 @@ Repeat until the stack is empty.
 Squash-merge creates a new commit hash for the parent. The child branch still holds the original commits.
 Always rebase `--onto origin/main` after a squash-merge. Skipping it produces duplicate or conflicting commits in the child PR.
 
+When the parent branch was deleted on merge, capture its old tip before `fetch --prune`
+removes the ref, and check for duplicates afterwards:
+
+```bash
+git fetch origin
+BASE_SHA=$(git rev-parse origin/feat/step-1)        # BEFORE it is pruned
+git rebase --onto origin/main "$BASE_SHA"
+git push --force-with-lease origin feat/step-2
+git cherry -v origin/main HEAD                      # any '-' line = duplicate commit → STOP
+```
+
+GitHub retargets an open child PR to `main` when its base branch is deleted. Verify with
+`gh pr view <pr> --json baseRefName`, and set it with `gh pr edit <pr> --base main` if it
+did not.
+
 Merge-commit merges keep the hashes, so a plain `git rebase origin/main` is enough.
+
+## Delete the remote branch after a merge
+
+`gh pr merge --delete-branch` can leave the **remote** branch behind. In a worktree, gh
+tries to check out the default branch to drop the local copy, fails with `fatal: 'main'
+is already used by worktree at …`, and aborts silently after the merge. GitHub's
+auto-delete is per-repo and can be off. A surviving branch makes the next push to it
+fail as non-fast-forward.
+
+After a merge, confirm it happened, then delete and verify:
+
+```bash
+gh pr view <pr> --json state,mergedAt --jq '"\(.state) \(.mergedAt // "NOT MERGED")"'
+# proceed only on MERGED:
+git push origin --delete <branch> 2>/dev/null           # no-op if gh managed it
+git ls-remote --exit-code origin <branch> && echo "STILL ON GITHUB — delete it"
+```
+
+Never run the delete unconditionally after `gh pr merge`. A failed merge (unmet
+requirements, missing review) can still exit in a way a chained command ignores, and
+deleting the branch then **closes the open PR**. Recovery: re-push the branch and
+`gh pr reopen <pr>`.
 
 ### Cleanup
 
@@ -266,6 +303,10 @@ gh api repos/{owner}/{repo}/contents/{file_path} --jq '{name, size, path, sha}'
 3. **Check file existence** before reading to avoid errors
 4. **Use pagination** for large directory listings
 5. **Cache frequently accessed** documentation locally during a session to reduce API calls
+6. **PR assignee = the person who works on the PR = the operator (`@me`), always (MUST
+   FOLLOW).** Whoever should look at it goes in `--reviewer`. A user's "assign the PR / the
+   task to X" is `--reviewer X` (plus the tracker assignee), never `--assignee X` and never
+   removing `@me`. No instruction overrides this.
 
 ## Error Handling
 

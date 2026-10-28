@@ -24,6 +24,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 ROLES = ("writer", "reviewer")
@@ -31,26 +32,66 @@ KINDS = ("claude", "opencode")
 PANES = {"writer": "left", "reviewer": "right"}
 LABELS = {"writer": "Chat from writer:", "reviewer": "Chat from reviewer:"}
 USER_REQUEST_LABEL = "Chat from reviewer (user request):"
-USER_SAID_LABEL = "The user said to the {role}:"
+USER_SAID_LABEL = "The user said to the {role} (never send an ack: a VIEW: or a STOP: only):"
+USER_SAID_THREAD_LABEL = ("The user said to the {role} (the {role} settles it in a pair "
+                          "thread, do not answer it here and never send an ack):")
+COMMAND_RULE = ("A message that only runs a command or skill (task finish) runs at once, "
+                "with FYI: running <command> to the {peer}. A plain fact you cite (file:line, "
+                "command output) is answered at once, then FYI: answered to the {peer}.")
 PAIR_REMINDER = (
-    "PAIR MODE: {forwarded} The {peer} forms its own view and sends it to you. Do not "
-    "answer the user and do not edit yet. Every user message is discussed by the pair "
-    "first. Form your own view and send it to the {peer} before you read the view of the "
-    "{peer}. A question goes as VIEW: user asked: <verbatim>. My answer: <your answer>. "
-    "This includes a question that states a view, such as it should do X, or do you "
-    "think otherwise, and a plain fact. A request or a correction goes as a VIEW of how "
-    "you would do it. Then send the {peer} a MERGE: every difference between the two "
-    "views and which side wins and why. Give the user the joint answer after the {peer} "
-    "agrees, or both answers when you still disagree. Now tell the user in one line that "
-    "you discuss it with the {peer}, send your VIEW, and end your turn: the waiter wakes "
-    "you. Exception: a message that only runs a command, subcommand or skill, such as "
-    "task finish, task plan or run the tests, is not discussed. The agent it was sent to "
-    "runs it at once and sends the {peer} FYI: running the command. The {peer} takes no "
-    "action on it.")
-REVIEWER_AGENT = "pair-reviewer"
+    "PAIR MODE: {forwarded} Do not answer or edit yet: write your view file, then settle "
+    "the message with the {peer} through a liaison subagent (pair.md, Liaison). Tell the "
+    "user in one line that the pair discusses it, and give the joint result when the "
+    "liaison returns. " + COMMAND_RULE)
+PAIR_REMINDER_DIRECT = (
+    "PAIR MODE: {forwarded} Do not answer or edit yet: send the {peer} your own VIEW (a "
+    "question as VIEW: user asked: <verbatim>. My answer: <answer>), then MERGE per "
+    "pair.md. Tell the user in one line that you discuss it with the {peer}; end your "
+    "turn. " + COMMAND_RULE)
+# the OpenCode agent names are what its prompt bar shows: Planning, Main, Review
+REVIEWER_AGENT = "review"
+# the reviewer agents before the rename: a reviewer started with one still runs on it
+LEGACY_REVIEWER_AGENTS = ("pair-reviewer", "pair-reviewer-plan")
+# the models of each task stage (SKILL.md, Stages). A running session cannot switch its
+# model, so `stage` restarts the writer and the reviewer with these.
+STAGES = ("plan", "impl")
+MODELS = {
+    "plan": {"claude": {"model": "claude-opus-5-5", "effort": "xhigh"},
+             "opencode": {"model": "openai/gpt-6-astra", "variant": "high"},
+             "writer_agent": "planning"},
+    "impl": {"claude": {"model": "claude-opus-5-5", "effort": "high"},
+             "opencode": {"model": "openai/gpt-6.1-sol", "variant": "high"},
+             "writer_agent": "main"},
+}
+# the stage record of a single-agent session, at the worktree base
+STAGE_FILE = ".task-stage"
+# `stage plan --fresh` (references/plan.md): the first prompt of the restarted writer,
+# passed to the launcher as TASK_CONTINUE. No shell-special characters: it is nested in
+# "..." inside '...' on the start line.
+FRESH_PROMPT = ("Plan discussion: your context was cleared on purpose and PLAN.md at the "
+                "worktree base is the whole task context now. Read PLAN.md, then open the "
+                "plan gate (references/plan.md, step 6) and discuss the plan with the user.")
+# `stage` returns before the handoff restarts the session it runs in
+STAGE_SETTLE_SECONDS = float(os.environ.get("PAIR_STAGE_SETTLE_SECONDS", "3"))
+# typed reviewer start lines retried when the split shell lost keystrokes
+LAUNCH_ATTEMPTS = 3
 MAX_BODY_BYTES = 4000
 POLL_SECONDS = 1.0
 HTTP_TIMEOUT = 10
+# prompt_async answers 204 before it runs: an accepted prompt is stored as a user message
+# within ~200 ms, a dropped one (unknown agent or model) never is
+CONFIRM_SECONDS = float(os.environ.get("PAIR_CONFIRM_SECONDS", "5"))
+CONFIRM_POLL_SECONDS = 0.2
+# the user message is among the newest ones even while the session streams its answer
+CONFIRM_MESSAGES = 20
+# the decision loop runs in liaison threads when the reviewer is an OpenCode agent
+THREAD_ONLY_KINDS = ("DECISION:", "VIEW:", "MERGE:")
+# an FYI needs no reply: it waits in .pair/held/<role>/ and goes out with the next other
+# message to that role, or when this many pile up; each delivery costs the peer a turn
+FYI_BATCH = int(os.environ.get("PAIR_FYI_BATCH", "5"))
+# edit tools the writer's PreToolUse hook checks against the open pair threads
+EDIT_TOOLS = "Edit|Write|MultiEdit|NotebookEdit"
+THREADS_LISTED = 12
 PAIR_PY = Path(__file__).resolve()
 SKILL_DIR = PAIR_PY.parent.parent
 
@@ -198,15 +239,43 @@ def http_json(method: str, url: str, payload: dict | None = None) -> object:
     return json.loads(body) if body else None
 
 
+def stored_prompt(cfg: dict, session: str, text: str) -> bool:
+    messages = http_json("GET", opencode_url(
+        cfg, f"/session/{session}/message?limit={CONFIRM_MESSAGES}")) or []
+    for message in messages if isinstance(messages, list) else []:
+        if message.get("info", {}).get("role") != "user":
+            continue
+        for part in message.get("parts", []):
+            if part.get("type") == "text" and str(part.get("text", "")).strip() == text.strip():
+                return True
+    return False
+
+
+def prompt_session(cfg: dict, session: str, text: str, agent: str | None) -> None:
+    """prompt_async, then wait until the session stored the prompt.
+
+    prompt_async returns 204 before it runs the prompt and logs a failure only on the
+    server, so a dropped prompt looked delivered and its sender waited for a reply that
+    could never come.
+    """
+    payload: dict = {"parts": [{"type": "text", "text": text}]}
+    if agent:
+        payload["agent"] = agent
+    http_json("POST", opencode_url(cfg, f"/session/{session}/prompt_async"), payload)
+    deadline = time.monotonic() + CONFIRM_SECONDS
+    while not stored_prompt(cfg, session, text):
+        if time.monotonic() >= deadline:
+            raise PairError(f"opencode session {session} did not take the prompt (it answered "
+                            f"prompt_async but stored nothing in {CONFIRM_SECONDS:g}s; its log "
+                            "says prompt_async failed, e.g. for an unknown agent or model)")
+        time.sleep(CONFIRM_POLL_SECONDS)
+
+
 def opencode_prompt(cfg: dict, role: str, text: str, agent: str | None = None) -> None:
     session = cfg["opencode"].get("session")
     if not session:
         raise PairError("the opencode session is not bound yet (pair.py launch binds it)")
-    payload: dict = {"parts": [{"type": "text", "text": text}]}
-    agent = agent or cfg["roles"][role].get("agent")
-    if agent:
-        payload["agent"] = agent
-    http_json("POST", opencode_url(cfg, f"/session/{session}/prompt_async"), payload)
+    prompt_session(cfg, session, text, agent or cfg["roles"][role].get("agent"))
 
 
 def focus_opencode(cfg: dict) -> None:
@@ -252,9 +321,44 @@ def cmd_send(args: argparse.Namespace) -> int:
     if args.user_request and sender != "reviewer":
         raise PairError("--user-request is only for a message from the reviewer to the writer")
     body = read_body(args)
+    if sender == "writer" and uses_threads(cfg, sender) and body.startswith(THREAD_ONLY_KINDS):
+        # one main channel serialises every decision behind the main reviewer's turn
+        raise PairError("with an OpenCode reviewer a decision runs in a liaison thread, never "
+                        "on the main channel (pair.md, Liaison). A liaison that returned "
+                        "blocked or unresponsive: follow Peer not reachable.", code=7)
     label = USER_REQUEST_LABEL if args.user_request else LABELS[sender]
-    path = write_message(base, to, sender, f"{label} {body}")
+    if body.startswith("FYI:") and not args.user_request:
+        held = put_message(held_box(base, to), sender, f"{label} {body}")
+        if len(held_messages(base, to)) < FYI_BATCH:
+            print(json.dumps({"sent": held.name, "delivered": False, "held": True}))
+            return 0
+        path = release_held(base, to)
+    else:
+        release_held(base, to)
+        path = write_message(base, to, sender, f"{label} {body}")
     return deliver(base, cfg, to, path)
+
+
+def held_box(base: Path, role: str) -> Path:
+    return pair_dir(base) / "held" / role
+
+
+def held_messages(base: Path, role: str) -> list[Path]:
+    box = held_box(base, role)
+    return sorted(p for p in box.glob("*.md") if p.is_file()) if box.is_dir() else []
+
+
+def release_held(base: Path, role: str) -> Path | None:
+    """Move the held FYIs for `role` into its inbox as ONE message, so they cost one turn."""
+    held = held_messages(base, role)
+    if not held:
+        return None
+    texts = [p.read_text(encoding="utf-8").rstrip("\n") for p in held]
+    sender = held[0].stem.split("-", 1)[1]
+    path = write_message(base, role, sender, "\n".join(texts))
+    for p in held:
+        p.unlink()
+    return path
 
 
 def deliver(base: Path, cfg: dict, to: str, path: Path) -> int:
@@ -282,15 +386,102 @@ def deliver(base: Path, cfg: dict, to: str, path: Path) -> int:
     return 0
 
 
-def user_said(base: Path, role: str, prompt: str) -> str:
+def uses_threads(cfg: dict, role: str) -> bool:
+    """A Claude writer with an OpenCode reviewer settles decisions in liaison threads."""
+    return (role == "writer" and cfg["roles"]["writer"]["kind"] == "claude"
+            and cfg["roles"]["reviewer"]["kind"] == "opencode")
+
+
+SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+    # KEY=value / token: value, where the key names a secret  # pragma: allowlist secret
+    re.compile(r"(?i)(?<=\b)((?:api[-_]?key|token|secret|password|passwd|authorization|cookie|bearer)"
+               r"[\"']?\s*[:=]?\s*[\"']?)[^\s\"',;]{6,}"),
+    # long opaque tokens: mixed case and digits, 24+ chars, not part of a path
+    re.compile(r"(?<![\w\-/.])(?=[\w\-]*[A-Z])(?=[\w\-]*[a-z])(?=[\w\-]*\d)[\w\-]{24,}(?![\w\-/.])"),
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Mask anything that looks like a credential before it leaves this agent."""
+    text = SECRET_PATTERNS[0].sub("[REDACTED]", text)
+    text = SECRET_PATTERNS[1].sub(r"\1[REDACTED]", text)
+    return SECRET_PATTERNS[2].sub("[REDACTED]", text)
+
+
+def user_said(base: Path, cfg: dict, role: str, prompt: str) -> str:
     """The message that tells the peer what the user typed into `role`'s pane."""
-    body = f"{USER_SAID_LABEL.format(role=role)} {prompt}"
+    # the peer may run on another provider: a token the user pasted stays with this agent
+    prompt = redact_secrets(prompt)
+    label = (USER_SAID_THREAD_LABEL if uses_threads(cfg, role) else USER_SAID_LABEL)
+    label = label.format(role=role)
+    body = f"{label} {prompt}"
     if len(body.encode("utf-8")) <= MAX_BODY_BYTES:
         return body
     long_file = pair_dir(base) / "files" / f"user-to-{role}-{time.time_ns()}.md"
     long_file.parent.mkdir(parents=True, exist_ok=True)
     long_file.write_text(prompt + "\n", encoding="utf-8")
-    return f"{USER_SAID_LABEL.format(role=role)} (long message, read it in {long_file})"
+    return f"{label} (long message, read it in {long_file})"
+
+
+ROUTE_RULE = (
+    "ROUTE this message: when it names one of these threads or goes on with its topic, it "
+    "belongs to that thread. Open: its liaison still runs, so SendMessage it the follow-up, "
+    "as user added: <the message verbatim>. Agreed, disputed or closed: start a liaison with "
+    "thread: resume <id>. About none of them: thread: new.")
+
+
+def thread_routes(base: Path, cfg: dict) -> str:
+    """The threads a user message may continue, for the writer's routing; '' when none."""
+    session = cfg["opencode"].get("session")
+    # a thread of an earlier reviewer process cannot be resumed: its subagent is gone
+    rows = [(path, meta) for path, meta in all_threads(base)
+            if meta.get("pair_session") == session]
+    if not rows:
+        return ""
+    lines = ["PAIR THREADS, newest first:"]
+    for path, meta in reversed(rows[-THREADS_LISTED:]):
+        line = (f"{meta['id']} {meta['status']} {age(meta['created_ms'])}: {meta['topic']} "
+                f"[{', '.join(meta['files'])}]")
+        decision = path / "decision.md"
+        if meta["status"] != "open" and decision.is_file():
+            first = decision.read_text(encoding="utf-8").strip().splitlines()[:1]
+            if first:
+                line += f" decided: {first[0][:160]}"
+        lines.append(line)
+    lines.append(ROUTE_RULE)
+    return "\n".join(lines)
+
+
+STAGE_LINE = "TASK STAGE: {stage} (SKILL.md, Stages)."
+UNKNOWN_STAGE_NOTE = (
+    "TASK STAGE: this pair started before the stage was recorded, so it is PLAN now. Only "
+    "when the user explicitly approved PLAN.md, run python3 {py} stage --base {base} impl "
+    "(SKILL.md, Stages); never infer the approval from PLAN.md.")
+
+
+def stage_note(base: Path, cfg: dict, role: str, session_id: object) -> str:
+    """The stage line for a hook; records an unknown stage as plan and the Claude session id.
+
+    The session id changes after /clear, and `stage` resumes the recorded one.
+    """
+    changed = False
+    note = STAGE_LINE.format(stage=str(cfg.get("stage", "")).upper())
+    if cfg.get("stage") not in STAGES:
+        cfg["stage"] = "plan"
+        note = UNKNOWN_STAGE_NOTE.format(py=PAIR_PY, base=base)
+        changed = True
+    sessions = cfg.setdefault("claude_session", {})
+    if (isinstance(session_id, str) and UUID_RE.fullmatch(session_id)
+            and cfg["roles"][role]["kind"] == "claude" and sessions.get(role) != session_id):
+        sessions[role] = session_id
+        changed = True
+    if changed:
+        try:
+            save_config(base, cfg)
+        except OSError:
+            pass  # the next hook run records it
+    return note
 
 
 def cmd_user_prompt(args: argparse.Namespace) -> int:
@@ -302,19 +493,25 @@ def cmd_user_prompt(args: argparse.Namespace) -> int:
     """
     peer = other(args.role)
     try:
-        prompt = str(json.load(sys.stdin).get("prompt", "")).strip()
+        payload = json.load(sys.stdin)
+        prompt = str(payload.get("prompt", "")).strip()
     except (json.JSONDecodeError, AttributeError):
-        prompt = ""
+        payload, prompt = {}, ""
     # claude code also fires the hook for background-task notifications, which no user typed
     if not prompt or prompt.startswith("<task-notification>"):
         return 0
     errors = (PairError, OSError, KeyError, ValueError, subprocess.TimeoutExpired)
+    reminder = PAIR_REMINDER_DIRECT
     try:
         base = resolve_base(args.base)
         cfg = load_config(base)
-        path = write_message(base, peer, "user", user_said(base, args.role, prompt))
+        if uses_threads(cfg, args.role):
+            reminder = PAIR_REMINDER
+        stage_line = stage_note(base, cfg, args.role, payload.get("session_id"))
+        release_held(base, peer)
+        path = write_message(base, peer, "user", user_said(base, cfg, args.role, prompt))
     except errors as exc:
-        print(PAIR_REMINDER.format(
+        print(reminder.format(
             forwarded=(f"pair.py could NOT forward this user message to the {peer} ({exc}). "
                        f"Send it to the {peer} yourself, in the user own words."),
             peer=peer))
@@ -335,7 +532,22 @@ def cmd_user_prompt(args: argparse.Namespace) -> int:
         forwarded = (f"pair.py queued this user message for the {peer}, but could not "
                      f"wake it ({exc}). Do not send it again; tell the user in one line that "
                      f"the {peer} is not reachable.")
-    print(PAIR_REMINDER.format(forwarded=forwarded, peer=peer))
+    print(reminder.format(forwarded=forwarded, peer=peer))
+    print(stage_line)
+    if uses_threads(cfg, args.role):
+        try:
+            routes = thread_routes(base, cfg)
+        except errors:
+            routes = ""
+        if routes:
+            print(routes)
+    try:
+        idle_marker(base, args.role).unlink(missing_ok=True)  # a user message is new work
+        note = waiter_down_note(base, args.role) if cfg["roles"][args.role]["kind"] == "claude" else ""
+    except errors:
+        note = ""
+    if note:
+        print(note)
     return 0
 
 
@@ -343,20 +555,159 @@ def claude_settings(base: Path, role: str) -> dict:
     args = f"--base {shlex.quote(str(base))} --role {role}"
     prompt = f"python3 {shlex.quote(str(PAIR_PY))} user-prompt {args}"
     start = f"python3 {shlex.quote(str(PAIR_PY))} session-start {args}"
-    return {"hooks": {
+    guard = f"python3 {shlex.quote(str(PAIR_PY))} guard {args}"
+    edit_guard = f"python3 {shlex.quote(str(PAIR_PY))} edit-guard {args}"
+    hooks = {"hooks": {
         "UserPromptSubmit": [
             {"hooks": [{"type": "command", "command": prompt, "timeout": 20}]}],
+        # a Monitor expires after 30 minutes; these catch a waiter nobody re-armed
+        "PostToolUse": [{"hooks": [{"type": "command", "command": guard, "timeout": 20}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": guard, "timeout": 20}]}],
         # /clear (typed as /clear, /new or /reset) keeps the process and its old waiter
         "SessionStart": [
             {"matcher": "clear", "hooks": [{"type": "command", "command": start, "timeout": 20}]}],
     }}
+    if role == "writer":
+        # a file of a decision still under discussion in a pair thread is not typed yet
+        hooks["hooks"]["PreToolUse"] = [{"matcher": EDIT_TOOLS, "hooks": [
+            {"type": "command", "command": edit_guard, "timeout": 20}]}]
+    return hooks
+
+
+WAITER_DOWN = (
+    "PAIR WAITER DOWN: your pair.py wait is not running (its Monitor expired or stopped), so "
+    "the {peer}'s messages do not reach you. Before any other step, start the Monitor tool "
+    "on python3 {py} wait --follow --base {base} --role {role} (timeout_ms 1800000, "
+    "description pair messages), then handle the messages above, if any, per pair.md. "
+    "If the task is finished and nothing is pending, run python3 {py} idle --base {base} "
+    "--role {role} instead and end the turn.")
+
+
+def idle_marker(base: Path, role: str) -> Path:
+    return pair_dir(base) / f"idle-{role}"
+
+
+IDLE_NOTE = (
+    "PAIR IDLE: the {role} has no work. Its waiter is stopped and the pair hooks stay quiet "
+    "until new work arrives. Do NOT start the Monitor again; end your turn. A user message "
+    "ends idle mode.")
+
+
+def waiter_down_note(base: Path, role: str) -> str:
+    """Hand over the backlog of a dead waiter and say how to re-arm it; '' when listening.
+
+    An idle agent with nothing queued is left alone: there is nothing to wait for.
+    """
+    if waiter_state(base, role) != "absent":
+        return ""
+    messages = unread(base, role)
+    marker = idle_marker(base, role)
+    if marker.exists():
+        if not messages:
+            return ""
+        marker.unlink(missing_ok=True)  # a queued message is new work
+    parts = []
+    if messages:
+        parts.append(f"PAIR MESSAGES for the {role} ({len(messages)}), queued while no waiter ran:")
+        for path in messages:
+            try:
+                parts.append(path.read_text(encoding="utf-8").rstrip("\n"))
+                mark_read(base, role, path)
+            except FileNotFoundError:
+                parts.pop()  # a waiter that just started took it
+    parts.append(WAITER_DOWN.format(peer=other(role), py=PAIR_PY, base=base, role=role))
+    return "\n".join(parts)
+
+
+def cmd_guard(args: argparse.Namespace) -> int:
+    """PostToolUse and Stop hook of a Claude Code agent in pair mode.
+
+    The Monitor that runs `wait --follow` expires after at most 30 minutes, and an
+    agent busy with long work forgets to re-arm it: the peer's messages then pile up
+    unseen. This hands the backlog over and tells the agent to re-arm. It never fails
+    the tool call or the stop.
+    """
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict) or payload.get("agent_id"):
+        return 0  # a subagent must never take the main agent's messages
+    event = payload.get("hook_event_name", "")
+    if event == "PostToolUse" and payload.get("tool_name") == "Monitor":
+        return 0  # the call that starts the waiter, before its pid file exists
+    if event == "Stop" and payload.get("stop_hook_active"):
+        return 0  # already blocked once: never loop
+    errors = (PairError, OSError, KeyError, ValueError)
+    try:
+        base = resolve_base(args.base)
+        cfg = load_config(base)
+        if cfg["roles"][args.role]["kind"] != "claude":
+            return 0
+        note = waiter_down_note(base, args.role)
+    except errors:
+        return 0
+    if not note:
+        return 0
+    if event == "Stop":
+        print(json.dumps({"decision": "block", "reason": note}))
+    else:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": event or "PostToolUse",
+                                                 "additionalContext": note}}))
+    return 0
+
+
+EDIT_DENIED = ("PAIR: {file} belongs to pair thread {id} ({topic}), which is still open: "
+               "its decision is not agreed yet. Do other work, or end the turn; the liaison "
+               "returns the decision (pair.md, Liaison). Mechanical work inside an agreed "
+               "decision is never blocked: only an open thread blocks its files.")
+
+
+def cmd_edit_guard(args: argparse.Namespace) -> int:
+    """PreToolUse hook of a Claude writer: refuse an edit to a file of an open thread.
+
+    It covers the writer and its subagents (builders, fixers). It never fails the
+    tool call on its own error: a broken guard must not stop the work.
+    """
+    try:
+        payload = json.load(sys.stdin)
+        tool_input = payload.get("tool_input") or {}
+        target = tool_input.get("file_path") or tool_input.get("notebook_path")
+        if not target:
+            return 0
+        base = resolve_base(args.base)
+        path = Path(target)
+        if not path.is_absolute():
+            path = Path(payload.get("cwd") or base) / path
+        rel = os.path.relpath(path.resolve(), base.resolve())
+        if rel.startswith("..") or rel.startswith(".pair" + os.sep):
+            return 0
+        for _dir, meta in all_threads(base):
+            if meta["status"] != "open":
+                continue
+            for theirs in meta["files"]:
+                if overlaps(rel, theirs):
+                    print(json.dumps({"hookSpecificOutput": {
+                        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                        "permissionDecisionReason": EDIT_DENIED.format(
+                            file=rel, id=meta["id"], topic=meta["topic"])}}))
+                    return 0
+    except (PairError, OSError, KeyError, ValueError, AttributeError, TypeError):
+        return 0
+    return 0
 
 
 SESSION_START_NOTE = (
     "PAIR MODE resumed after /clear: you are still the {role_upper} of the pair, the "
     "{peer} runs in the {pane} pane. pair.py stopped your old waiter{focused}. Re-read "
-    "{pair_md}, then PLAN.md and the latest files in {base}/.pair/inbox/*/read/ to catch "
-    "up. Start python3 {py} wait --base {base} --role {role} in the background now.")
+    "{pair_md}, then PLAN.md and {base}/.pair/decisions.md (every pair decision so far) to "
+    "catch up, and the latest files in {base}/.pair/inbox/*/read/ for what they do not "
+    "cover.{rearm}")
+
+SESSION_START_REARM = (
+    " Start the Monitor tool on python3 {py} wait --follow --base {base} --role {role} "
+    "now (timeout_ms 1800000).")
+SESSION_START_IDLE = " You are idle (no work): do not start the Monitor until new work arrives."
 
 
 def cmd_session_start(args: argparse.Namespace) -> int:
@@ -368,6 +719,13 @@ def cmd_session_start(args: argparse.Namespace) -> int:
     except errors:
         return 0
     role, peer = args.role, other(args.role)
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    # /clear starts a new conversation id: `stage` must resume this one
+    stage = stage_note(base, cfg, role, payload.get("session_id") if isinstance(payload, dict)
+                       else None)
     retire_waiter(base, role)
     focused = ""
     if cfg["roles"][peer]["kind"] == "opencode":
@@ -376,9 +734,12 @@ def cmd_session_start(args: argparse.Namespace) -> int:
             focused = f" and put the {peer} pane back on the pair session"
         except errors:
             pass
+    rearm = (SESSION_START_IDLE if idle_marker(base, role).exists()
+             else SESSION_START_REARM.format(py=PAIR_PY, base=base, role=role))
     print(SESSION_START_NOTE.format(role_upper=role.upper(), role=role, peer=peer,
                                     pane=PANES[peer], focused=focused, base=base,
-                                    pair_md=SKILL_DIR / "pair.md", py=PAIR_PY))
+                                    pair_md=SKILL_DIR / "pair.md", rearm=rearm))
+    print(stage)
     return 0
 
 
@@ -390,15 +751,21 @@ SUPERSEDED = ("SUPERSEDED: a newer pair.py wait of the {role} took over this one
               "Do NOT start another wait for it.")
 
 
-def retire_waiter(base: Path, role: str) -> None:
+def recorded_waiter(base: Path, role: str) -> int | None:
+    try:
+        return int(waiter_pid_file(base, role).read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def retire_waiter(base: Path, role: str, pid: int | None = None) -> None:
     """Stop the recorded waiter of `role`, e.g. one a /clear left running.
 
     Two waiters race for one inbox, and the old one hands the batch to a
     conversation that no longer exists.
     """
-    try:
-        pid = int(waiter_pid_file(base, role).read_text().strip())
-    except (FileNotFoundError, ValueError):
+    pid = recorded_waiter(base, role) if pid is None else pid
+    if pid is None:
         return
     if pid == os.getpid() or not pid_alive(pid):
         return
@@ -412,20 +779,51 @@ def retire_waiter(base: Path, role: str) -> None:
             pass
 
 
+def cmd_idle(args: argparse.Namespace) -> int:
+    """Enter idle mode: no work left, so stop the waiter and silence the re-arm nags."""
+    base = resolve_base(args.base)
+    # the marker goes first: the guard after this call must not see a bare dead waiter
+    idle_marker(base, args.role).write_text("idle\n")
+    retire_waiter(base, args.role)
+    # the FYIs this agent held for the peer must not wait for work that may never come
+    # (a Claude peer reads them with its next wait; a send now would mark it blocked)
+    peer = other(args.role)
+    if release_held(base, peer) is not None:
+        try:
+            cfg = load_config(base)
+            if cfg["roles"][peer]["kind"] == "opencode":
+                flush_opencode(base, cfg, peer)
+        except (PairError, OSError, KeyError):
+            pass  # the message stays in the peer's inbox for its next flush
+    print(IDLE_NOTE.format(role=args.role))
+    return 0
+
+
 def cmd_wait(args: argparse.Namespace) -> int:
     base = resolve_base(args.base)
     role = args.role
-    retire_waiter(base, role)
+    pid_file = waiter_pid_file(base, role)
+    old = recorded_waiter(base, role)
+    # claim the pid file first: the old waiter then knows a newer one superseded it
+    pid_file.write_text(f"{os.getpid()}\n")
+    retire_waiter(base, role, old)
+    idle_marker(base, role).unlink(missing_ok=True)
 
-    def superseded(_signum, _frame):
-        print(SUPERSEDED.format(role=role))
-        sys.stdout.flush()
-        # skip the finally below: the pid file belongs to the newer waiter now
+    def stopped(_signum, _frame):
+        try:
+            mine = pid_file.read_text().strip() == str(os.getpid())
+        except FileNotFoundError:
+            mine = False
+        if mine:
+            # killed by its owner (a Monitor expiry, a /clear): nothing to say
+            pid_file.unlink(missing_ok=True)
+        else:
+            print(SUPERSEDED.format(role=role))
+            sys.stdout.flush()
+        # skip the finally below: the pid file is gone or belongs to the newer waiter
         os._exit(0)
 
-    signal.signal(signal.SIGTERM, superseded)
-    pid_file = waiter_pid_file(base, role)
-    pid_file.write_text(f"{os.getpid()}\n")
+    signal.signal(signal.SIGTERM, stopped)
     deadline = time.monotonic() + args.timeout if args.timeout else None
     delivered = False
     try:
@@ -436,6 +834,10 @@ def cmd_wait(args: argparse.Namespace) -> int:
                 for path in messages:
                     print(path.read_text(encoding="utf-8").rstrip("\n"))
                     mark_read(base, role, path)
+                if args.follow:
+                    # under the Monitor tool each batch is one event; keep listening
+                    sys.stdout.flush()
+                    continue
                 print(f"Start the wait again in the background first, then handle them: "
                       f"python3 {PAIR_PY} wait --base {base} --role {role}")
                 sys.stdout.flush()
@@ -487,23 +889,27 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
-def cmd_respawn(args: argparse.Namespace) -> int:
+def respawn(old: str, name: str, cwd: str, command: str) -> str:
     """Replace a session with a new one right after it, then close the old one."""
-    out = ctl("session", "new", "--cwd", args.cwd, "--name", args.name,
-              "--after", args.old, "--command", args.command)
+    out = ctl("session", "new", "--cwd", cwd, "--name", name,
+              "--after", old, "--no-select", "--command", command)
     match = UUID_RE.search(out)
     if not match:
         raise PairError(f"agtermctl session new printed no session id: {out.strip()}")
-    if os.environ.get("AGTERM_SESSION_ID", "").lower() == args.old.lower():
+    if os.environ.get("AGTERM_SESSION_ID", "").lower() == old.lower():
         # this process runs inside the old session: close it once we have returned
-        command = os.environ.get("AGTERMCTL", "agtermctl")
-        subprocess.Popen(["/bin/sh", "-c", f"sleep 2; {shlex.quote(command)} session close "
-                          f"--target {shlex.quote(args.old)}"],
+        ctl_bin = os.environ.get("AGTERMCTL", "agtermctl")
+        subprocess.Popen(["/bin/sh", "-c", f"sleep 2; {shlex.quote(ctl_bin)} session close "
+                          f"--target {shlex.quote(old)}"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
     else:
-        ctl("session", "close", "--target", args.old)
-    print(match.group(0))
+        ctl("session", "close", "--target", old)
+    return match.group(0)
+
+
+def cmd_respawn(args: argparse.Namespace) -> int:
+    print(respawn(args.old, args.name, args.cwd, args.command))
     return 0
 
 
@@ -512,6 +918,7 @@ def cmd_flush(args: argparse.Namespace) -> int:
     cfg = load_config(base)
     if cfg["roles"][args.to]["kind"] != "opencode":
         raise PairError(f"the {args.to} is a Claude Code agent; its next wait delivers the backlog")
+    release_held(base, args.to)
     flush_opencode(base, cfg, args.to)
     print(json.dumps({"flushed": True}))
     return 0
@@ -528,7 +935,11 @@ def opencode_up(cfg: dict) -> bool:
 def cmd_status(args: argparse.Namespace) -> int:
     base = resolve_base(args.base)
     cfg = load_config(base)
-    out: dict = {"base": str(base), "roles": {}}
+    unknown = cfg.get("stage") not in STAGES
+    note = stage_note(base, cfg, "writer", None)
+    out: dict = {"base": str(base), "stage": cfg["stage"], "roles": {}}
+    if unknown:
+        out["stage_note"] = note
     for role in ROLES:
         kind = cfg["roles"][role]["kind"]
         reachable = waiter_alive(base, role) if kind == "claude" else opencode_up(cfg)
@@ -544,23 +955,23 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def reviewer_opencode_config() -> dict:
+def reviewer_opencode_config(stage: str) -> dict:
     return {
         "$schema": "https://opencode.ai/config.json",
-        "agent": {
-            REVIEWER_AGENT: {
-                "description": "Read-only reviewer in task pair mode",
-                # "all": a thread's child session runs it as a subagent too
-                "mode": "all",
-                "permission": {"edit": "deny", "bash": "allow"},
-            }
-        },
+        # one agent on the stage model: `stage` restarts the reviewer, which rewrites this
+        "agent": {REVIEWER_AGENT: {
+            "description": f"Read-only reviewer in task pair mode, {stage} stage",
+            # "all": a thread's child session runs it as a subagent too
+            "mode": "all",
+            **MODELS[stage]["opencode"],
+            "permission": {"edit": "deny", "bash": "allow"},
+        }},
         # keeps the pane on the pair session after a /new there
         "plugin": [(PAIR_PY.parent / "pair-opencode-plugin.js").as_uri()],
     }
 
 
-def exclude_from_git(base: Path) -> None:
+def exclude_from_git(base: Path, entry: str = "/.pair/") -> None:
     """Keep .pair/ out of `git status` when the worktree base is itself a repo."""
     result = subprocess.run(["git", "-C", str(base), "rev-parse", "--show-toplevel",
                              "--git-path", "info/exclude"],
@@ -573,35 +984,306 @@ def exclude_from_git(base: Path) -> None:
     path = Path(exclude) if Path(exclude).is_absolute() else base / exclude
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = path.read_text().splitlines() if path.exists() else []
-    if "/.pair/" not in lines:
-        path.write_text("\n".join([*lines, "/.pair/"]) + "\n")
+    if entry not in lines:
+        path.write_text("\n".join([*lines, entry]) + "\n")
 
 
-def cmd_init(args: argparse.Namespace) -> int:
+def single_record(base: Path) -> dict:
+    try:
+        rec = json.loads((base / STAGE_FILE).read_text())
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as exc:
+        raise PairError(f"{base / STAGE_FILE} is not JSON: {exc}") from exc
+    return rec if isinstance(rec, dict) else {}
+
+
+def is_pair(base: Path, single: bool) -> bool:
+    """Pair mode keeps the stage in .pair/config.json, a single session in .task-stage.
+
+    --single: a single session opened beside a pair (task switch --single).
+    """
+    return not single and (pair_dir(base) / "config.json").is_file()
+
+
+def load_record(base: Path, single: bool) -> dict:
+    return load_config(base) if is_pair(base, single) else single_record(base)
+
+
+def save_record(base: Path, single: bool, rec: dict) -> None:
+    if is_pair(base, single):
+        save_config(base, rec)
+        return
+    path = base / STAGE_FILE
+    tmp = path.with_name(STAGE_FILE + ".tmp")
+    tmp.write_text(json.dumps(rec, indent=2) + "\n")
+    tmp.replace(path)
+    exclude_from_git(base, f"/{STAGE_FILE}*")
+
+
+def record_stage(rec: dict) -> str:
+    """The recorded stage; an unknown one (a session older than stages) is plan."""
+    if rec.get("stage") not in STAGES:
+        rec["stage"] = "plan"
+    return rec["stage"]
+
+
+def claude_transcript_exists(session_id: str) -> bool:
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    return any(root.glob(f"*/{session_id}.jsonl"))
+
+
+def stage_flags(base: Path, rec: dict, role: str, pair: bool) -> str:
+    """The claude flags of the stage: resume the recorded conversation, or start a new one
+    under a recorded id. Updates `rec`; the caller saves it."""
+    stage = record_stage(rec)
+    if pair:
+        sessions = rec.setdefault("claude_session", {})
+        # a single session turned into the writer of a pair goes on with its conversation
+        sid = sessions.get(role) or (single_record(base).get("claude_session")
+                                     if role == "writer" and not rec.get("fresh") else None)
+    else:
+        sid = rec.get("claude_session")
+    if sid and claude_transcript_exists(sid):
+        flag = f"--resume {sid}"
+    else:
+        # a recorded id whose session never started is still free
+        sid = sid or str(uuid.uuid4())
+        flag = f"--session-id {sid}"
+    if pair:
+        rec["claude_session"][role] = sid
+    else:
+        rec["claude_session"] = sid
+    model = MODELS[stage]["claude"]
+    return f"{flag} --model {model['model']} --effort {model['effort']}"
+
+
+def latest_opencode_session(base: Path) -> str | None:
+    """The newest OpenCode session of this directory, for a writer that recorded none."""
+    try:
+        out = subprocess.run(["opencode", "session", "list", "--format", "json", "-n", "50"],
+                             capture_output=True, text=True, timeout=30, check=False).stdout
+        sessions = json.loads(out or "[]")
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+    mine = [x for x in sessions if isinstance(x, dict)
+            and Path(x.get("directory", "")).resolve() == base.resolve()]
+    return max(mine, key=lambda x: x.get("updated", 0))["id"] if mine else None
+
+
+def record_launcher(rec: dict, args: argparse.Namespace) -> None:
+    if args.launcher:
+        if not args.branch:
+            raise PairError("--launcher needs --branch")
+        rec["launcher"] = {"script": str(Path(args.launcher).resolve()), "branch": args.branch}
+
+
+def cmd_claude_args(args: argparse.Namespace) -> int:
+    """Print the claude flags of the task stage for a role, for a launcher."""
     base = Path(args.base).resolve()
+    pair = is_pair(base, args.single)
+    if args.role == "reviewer" and not pair:
+        raise PairError("--role reviewer needs a pair (.pair/config.json)")
+    rec = load_record(base, args.single)
+    record_launcher(rec, args)
+    if args.resume_id:
+        if not UUID_RE.fullmatch(args.resume_id):
+            raise PairError(f"--resume-id {args.resume_id} is not a claude session id")
+        if pair:
+            rec.setdefault("claude_session", {})[args.role] = args.resume_id
+        else:
+            rec["claude_session"] = args.resume_id
+    flags = stage_flags(base, rec, args.role, pair)
+    save_record(base, args.single, rec)
+    print(flags)
+    return 0
+
+
+def cmd_opencode_args(args: argparse.Namespace) -> int:
+    """Print the opencode writer flags of the task stage: its agent, and its session."""
+    base = Path(args.base).resolve()
+    rec = load_record(base, args.single)
+    record_launcher(rec, args)
+    stage = record_stage(rec)
+    session = rec.get("opencode_session")
+    if not session and args.resume and not rec.get("fresh"):
+        session = latest_opencode_session(base)
+    save_record(base, args.single, rec)
+    flags = f"--agent {MODELS[stage]['writer_agent']}"
+    print(f"{flags} --session {session}" if session else flags)
+    return 0
+
+
+SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def cmd_stage(args: argparse.Namespace) -> int:
+    """Switch the task stage and restart the sessions on its models (SKILL.md, Stages).
+
+    A running session cannot switch its model, so the writer terminal is respawned with
+    --resume of its conversation and the stage flags, and in pair mode `launch --reopen`
+    starts the reviewer in the new split. The old terminal closes with both panes, so the
+    reviewer is never restarted on its own first. The restart runs detached: this command
+    usually runs inside the session it replaces.
+
+    --fresh (plan only) restarts even on the same stage, with new conversations for every
+    agent: PLAN.md is the whole context of the plan discussion (references/plan.md).
+    """
+    base = Path(args.base).resolve()
+    if args.fresh and args.stage != "plan":
+        raise PairError("--fresh starts the plan discussion: use it with stage plan")
+    pair = is_pair(base, args.single)
+    if pair:
+        busy = [meta["id"] for _path, meta in all_threads(base) if meta["status"] == "open"]
+        if busy:
+            raise PairError(f"thread {', '.join(busy)} is open: settle and close it before the "
+                            "stage changes (its liaison and reviewer subagent die with the "
+                            "restart)", code=5)
+    rec = load_record(base, args.single)
+    record_launcher(rec, args)
+    # a Claude writer runs this command: its own conversation is the one to resume
+    own = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if UUID_RE.fullmatch(own):
+        if not pair:
+            rec["claude_session"] = own
+        elif rec["roles"]["writer"]["kind"] == "claude":
+            rec.setdefault("claude_session", {})["writer"] = own
+    for item in args.session_id or []:
+        role, _, sid = item.partition("=")
+        if role not in ROLES or not SESSION_ID_RE.fullmatch(sid):
+            raise PairError(f"--session-id {item}: use ROLE=ID, ROLE writer or reviewer")
+        if sid.startswith("ses_"):
+            if role != "writer":
+                raise PairError("only the OpenCode writer resumes a recorded session")
+            rec["opencode_session"] = sid
+        elif pair:
+            rec.setdefault("claude_session", {})[role] = sid
+        else:
+            rec["claude_session"] = sid
+    if rec.get("stage") == args.stage and not args.fresh:
+        save_record(base, args.single, rec)
+        print(json.dumps({"stage": args.stage, "changed": False}))
+        return 0
+    if args.fresh:
+        # no conversation to resume: every agent starts a new one on PLAN.md
+        rec.pop("claude_session", None)
+        rec.pop("opencode_session", None)
+        rec["fresh"] = True
+    old = rec.get("agterm_session") if pair else os.environ.get("AGTERM_SESSION_ID")
+    if not old:
+        raise PairError("no agterm session to restart: " + (
+            "pair.py launch records it" if pair else "run stage inside the task session"))
+    if not rec.get("launcher"):
+        raise PairError("no launcher recorded for this task (it was opened before stages): "
+                        "pass --launcher <the project new-task.sh> --branch <branch>")
+    if (pair and not args.fresh and rec["roles"]["writer"]["kind"] == "claude"
+            and not rec.get("claude_session", {}).get("writer")):
+        raise PairError("the conversation of the Claude writer is not recorded: run stage "
+                        "from the writer, or pass --session-id writer=<id>")
+    rec["stage"] = args.stage
+    if pair:
+        if rec["roles"]["reviewer"]["kind"] == "opencode":
+            # every reader follows it: prompts, thread children, the pane plugin
+            rec["roles"]["reviewer"]["agent"] = REVIEWER_AGENT
+        elif rec["opencode"].get("session") and not args.fresh:
+            # the OpenCode writer resumes the session that launch bound
+            rec["opencode_session"] = rec["opencode"]["session"]
+    save_record(base, args.single, rec)
+    handoff = [sys.executable, str(PAIR_PY), "stage-handoff", "--base", str(base),
+               "--old", old, "--wait-seconds", str(args.wait_seconds)]
+    if args.single:
+        handoff.append("--single")
+    if args.foreground:
+        return main(handoff[2:])
+    log = (pair_dir(base) / "stage.log") if pair else base / f"{STAGE_FILE}.log"
+    env = dict(os.environ)
+    # detached from the old session: respawn closes it at once, not after we return
+    env.pop("AGTERM_SESSION_ID", None)
+    with open(log, "w") as out:
+        subprocess.Popen(handoff, stdin=subprocess.DEVNULL, stdout=out,
+                         stderr=subprocess.STDOUT, env=env, start_new_session=True)
+    print(json.dumps({"stage": args.stage, "changed": True, "restart": "started",
+                      "log": str(log)}))
+    return 0
+
+
+def launcher_command(rec: dict, single: bool, kind: str) -> str:
+    """The writer start command the project launcher prints for the recorded stage."""
+    launcher = rec["launcher"]
+    argv = [launcher["script"], launcher["branch"], "--print-command"]
+    if single:
+        argv.append("--single")
+    env = dict(os.environ)
+    env.pop("OPENCODE", None)
+    env.pop("TASK_CONTINUE", None)
+    if kind == "opencode":
+        env["OPENCODE"] = "1"
+    if rec.get("fresh"):
+        # the first prompt of the new conversation, instead of the stage-change one
+        env["TASK_CONTINUE"] = FRESH_PROMPT
+    result = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=120,
+                            check=False)
+    command = result.stdout.strip()
+    if result.returncode != 0 or not command:
+        raise PairError(f"{' '.join(argv)} failed: {(result.stderr or result.stdout).strip()}")
+    return command.splitlines()[-1]
+
+
+def cmd_stage_handoff(args: argparse.Namespace) -> int:
+    """The detached half of `stage`: respawn the writer, then start the reviewer."""
+    base = Path(args.base).resolve()
+    time.sleep(STAGE_SETTLE_SECONDS)  # let the agent that ran `stage` take its result
+    pair = is_pair(base, args.single)
+    rec = load_record(base, args.single)
+    node = find_session(args.old)
+    kind = rec["roles"]["writer"]["kind"] if pair else agent_kind(node.get("foreground"))
+    if kind == "none":
+        raise PairError(f"no agent runs in agterm session {args.old}")
+    if pair:
+        # fresh port and reviewer configs (both stage agents), as for a re-open
+        init_pair(base, kind)
+    command = launcher_command(rec, args.single, kind)
+    sid = respawn(args.old, node.get("name") or base.name, str(base), command)
+    if pair:
+        launch(base, sid, True, args.wait_seconds)
+    rec = load_record(base, args.single)
+    if rec.pop("fresh", None):
+        # the new conversations are recorded: later restarts resume them again
+        save_record(base, args.single, rec)
+    print(json.dumps({"stage": rec["stage"], "session": sid}))
+    return 0
+
+
+def init_pair(base: Path, writer: str) -> int:
+    """Create or refresh .pair/ for a task; returns the opencode port."""
     root = pair_dir(base)
     for role in ROLES:
         (inbox(base, role) / "read").mkdir(parents=True, exist_ok=True)
     (root / "files").mkdir(parents=True, exist_ok=True)
     if (root / "config.json").is_file():
+        # an existing config keeps its stage and session ids: a re-open reads them
         cfg = load_config(base)
         started = cfg["roles"]["writer"]["kind"]
-        if started != args.writer:
+        if started != writer:
             raise PairError(f"this task was started with a {started} writer; "
                             "re-open it with the same agent")
     else:
-        reviewer = "opencode" if args.writer == "claude" else "claude"
-        cfg = {"version": 1,
-               "roles": {"writer": {"kind": args.writer}, "reviewer": {"kind": reviewer}}}
+        reviewer = "opencode" if writer == "claude" else "claude"
+        # a single session turned into a pair keeps its stage
+        stage = single_record(base).get("stage")
+        stage = stage if stage in STAGES else "plan"
+        cfg = {"version": 1, "stage": stage,
+               "roles": {"writer": {"kind": writer}, "reviewer": {"kind": reviewer}}}
         if reviewer == "opencode":
             cfg["roles"]["reviewer"]["agent"] = REVIEWER_AGENT
     cfg["pair_py"] = str(PAIR_PY)
     # launch looks for the opencode session created after this moment
     cfg["started_ms"] = int(time.time() * 1000)
     # a fresh port and no session: the previous opencode server is gone with its pane
-    cfg["opencode"] = {"port": free_port(), "session": None}
+    cfg["opencode"] = {"port": int(os.environ.get("PAIR_FREE_PORT") or free_port()),
+                       "session": None}
     (root / "opencode-reviewer.json").write_text(
-        json.dumps(reviewer_opencode_config(), indent=2) + "\n")
+        json.dumps(reviewer_opencode_config(record_stage(cfg)), indent=2) + "\n")
     for role in ROLES:
         if cfg["roles"][role]["kind"] == "claude":
             # the agent starts with --settings <this file>: its hook forwards user messages
@@ -611,13 +1293,22 @@ def cmd_init(args: argparse.Namespace) -> int:
     for role in ROLES:
         waiter_pid_file(base, role).unlink(missing_ok=True)
     exclude_from_git(base)
-    print(cfg["opencode"]["port"])
+    return cfg["opencode"]["port"]
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    print(init_pair(Path(args.base).resolve(), args.writer))
     return 0
 
 
 SHELL_SPECIAL = set("'\"$`\\")
-CATCH_UP = ("This task was re-opened: read PLAN.md and the files in .pair/inbox/*/read/ "
-            "to catch up first.")
+CATCH_UP = ("This task was re-opened: read PLAN.md and .pair/decisions.md (every pair "
+            "decision so far) to catch up first; read .pair/inbox/*/read/ only for a "
+            "topic they do not cover.")
+# a reviewer restarted by `stage plan --fresh`: PLAN.md alone, never the old messages
+FRESH_CATCH_UP = ("The context of both agents was cleared on purpose for the plan "
+                  "discussion: read PLAN.md, the whole task context now, and never the old "
+                  "messages in .pair/inbox/*/read/.")
 
 
 def brief(base: Path, cfg: dict, role: str, then: str | None = None,
@@ -633,10 +1324,11 @@ def brief(base: Path, cfg: dict, role: str, then: str | None = None,
         f"--to {peer} --stdin",
     ]
     if kind == "claude":
-        parts.append(f"Receive messages by starting python3 {py} wait --base {base} "
-                     f"--role {role} with the Bash tool in the background "
-                     "(run_in_background) now, and start it again as soon as a batch "
-                     "arrives, before you handle it.")
+        parts.append(f"Receive messages now with the Monitor tool (load it with ToolSearch "
+                     f"when it is deferred) on python3 {py} wait --follow --base {base} "
+                     f"--role {role}, timeout_ms 1800000, description pair messages. Each "
+                     "batch arrives as one event. Start it again only when the monitor "
+                     "expires or stops.")
     else:
         parts.append(f"Messages from the {peer} arrive by themselves as prompts that "
                      "start with Chat from.")
@@ -646,21 +1338,33 @@ def brief(base: Path, cfg: dict, role: str, then: str | None = None,
                  "are merged: one agent never decides alone while the other only signs. "
                  "A user message that only runs a command, subcommand or skill, such as "
                  "task finish, task plan or run the tests, is not a decision: run it at "
-                 "once and send the peer FYI: running the command.")
-    parts.append(f"Every question of the user is discussed by both agents before the user "
-                 f"gets an answer: send the {peer} VIEW: user asked: the question. My "
-                 "answer: your answer. Answer the user only after the two of you merge the "
-                 "views, and give both answers when you still disagree.")
+                 "once and send the peer FYI: running the command. How much discussion "
+                 "a decision needs depends on its weight: see Decision weight in pair.md.")
+    if uses_threads(cfg, role):
+        parts.append("Every opinion question of the user (why, could we, is this right) "
+                     "is discussed by both agents before the user gets an answer. "
+                     "A plain fact the user asks, answered from a cited file:line or "
+                     "command output, goes to the user at once, with an FYI to the peer. "
+                     "You are the DRIVER: for each decision and each "
+                     "user question or request, write your own view to a file, then run a "
+                     "background liaison subagent that settles it with the reviewer in a "
+                     "pair thread (see Liaison in pair.md). Edit or answer only with the "
+                     "result it returns.")
+    else:
+        parts.append(f"Every opinion question of the user (why, could we, is this right) "
+                     f"is discussed by both agents before the user gets an answer: send the "
+                     f"{peer} VIEW: user asked: the question. "
+                     "My answer: your answer. Answer the user only after the two of you "
+                     "merge the views, and give both answers when you still disagree. "
+                     "A plain fact the user asks, answered from a cited file:line or "
+                     "command output, goes to the user at once, with an FYI to the peer.")
     if role == "writer":
-        parts.append("You are the DRIVER: for each decision, write your own view to a "
-                     "file, send the reviewer a DECISION with the problem only, never your "
-                     "view, and wait for its VIEW. Then send your VIEW and a MERGE that takes "
-                     "the best of both, and edit only after the reviewer agrees. Forward "
-                     "every user request to the reviewer as a DECISION.")
-        if cfg["roles"]["reviewer"]["kind"] == "opencode":
-            parts.append(f"Discuss each DECISION in its own thread, in a background fork: "
-                         f"python3 {py} thread open (see Threads in pair.md), so the "
-                         "reviewer handles several decisions in parallel.")
+        if not uses_threads(cfg, role):
+            parts.append("You are the DRIVER: for each decision, write your own view to a "
+                         "file, send the reviewer a DECISION with the problem only, never "
+                         "your view, and wait for its VIEW. Then send your VIEW and a MERGE "
+                         "that takes the best of both, and edit only after the reviewer "
+                         "agrees. Forward every user request to the reviewer as a DECISION.")
     else:
         parts.append("You are the NAVIGATOR and you are READ-ONLY: never edit, create or "
                      "delete files in the worktree. You co-own every decision: answer each "
@@ -673,7 +1377,7 @@ def brief(base: Path, cfg: dict, role: str, then: str | None = None,
             parts.append("Threads in .pair/threads/ belong to their own reviewer subagents: "
                          "never read their files and never run thread send.")
     if reopen:
-        parts.append(CATCH_UP)
+        parts.append(FRESH_CATCH_UP if cfg.get("fresh") else CATCH_UP)
     if then:
         parts.append(f"Then do this: {then}")
     text = " ".join(parts)
@@ -716,26 +1420,43 @@ def runs(argv: list | None, kind: str) -> bool:
 
 
 def reviewer_command(base: Path, cfg: dict, reopen: bool) -> str:
+    """Write the reviewer start script and return the short line typed to run it.
+
+    The env and the agent flags live in the script, never in the typed line: a keystroke
+    lost while the split shell starts must break the line, not silently drop
+    OPENCODE_CONFIG and start the reviewer on the default agent and model.
+    """
     root = pair_dir(base)
-    # the brief goes through a file: a typed shell line must stay short
     brief_file = root / "reviewer-brief.txt"
     brief_file.write_text(brief(base, cfg, "reviewer", reopen=reopen), encoding="utf-8")
     brief_arg = f"\"$(cat {shlex.quote(str(brief_file))})\""
     if cfg["roles"]["reviewer"]["kind"] == "claude":
         settings = shlex.quote(str(claude_settings_file(base, "reviewer")))
-        return ("claude --dangerously-skip-permissions --disallowedTools Edit Write "
-                f"NotebookEdit --settings {settings} --append-system-prompt {brief_arg} "
-                "\"Pair mode start: follow the pair brief in your system prompt now.\"")
-    # --prompt starts opencode straight in a session, never on its start screen
-    return (f"OPENCODE_CONFIG={shlex.quote(str(root / 'opencode-reviewer.json'))} "
-            f"opencode --auto --agent {REVIEWER_AGENT} --port {cfg['opencode']['port']} "
-            f"--prompt {brief_arg}")
+        # the stage model, and --resume of the recorded conversation after a restart
+        flags = stage_flags(base, cfg, "reviewer", pair=True)
+        save_config(base, cfg)
+        start = ("exec claude --dangerously-skip-permissions --disallowedTools Edit Write "
+                 f"NotebookEdit --settings {settings} {flags} --append-system-prompt {brief_arg} "
+                 "\"Pair mode start: follow the pair brief in your system prompt now.\"")
+    else:
+        # the stage model: a reviewer started before the rename comes back on `review`
+        (root / "opencode-reviewer.json").write_text(
+            json.dumps(reviewer_opencode_config(record_stage(cfg)), indent=2) + "\n")
+        cfg["roles"]["reviewer"]["agent"] = agent = REVIEWER_AGENT
+        save_config(base, cfg)
+        # --prompt starts opencode straight in a session, never on its start screen
+        start = (f"export OPENCODE_CONFIG={shlex.quote(str(root / 'opencode-reviewer.json'))}\n"
+                 f"exec opencode --auto --agent {agent} --port {cfg['opencode']['port']} "
+                 f"--prompt {brief_arg}")
+    script = root / "reviewer-start.sh"
+    script.write_text(f"#!/bin/sh\n{start}\n", encoding="utf-8")
+    return f"sh {shlex.quote(str(script))}"
 
 
 def new_opencode_session(cfg: dict, base: Path) -> str | None:
     """The session opencode runs for this base: newest one active since init.
 
-    `updated`, not `created`: an opencode started with --continue resumes an older
+    `updated`, not `created`: an opencode started with --session resumes an older
     session, and its --prompt is what touches it now.
     """
     try:
@@ -750,33 +1471,180 @@ def new_opencode_session(cfg: dict, base: Path) -> str | None:
     return max(mine, key=lambda x: x["time"]["updated"])["id"]
 
 
-def cmd_launch(args: argparse.Namespace) -> int:
-    base = resolve_base(args.base)
+def launch(base: Path, sid: str, reopen: bool, wait_seconds: float) -> dict:
     cfg = load_config(base)
-    sid = args.session
     cfg["agterm_session"] = sid
     save_config(base, cfg)
+    start_reviewer(base, cfg, sid, reopen, wait_seconds)
+    return cfg
 
+
+def cmd_launch(args: argparse.Namespace) -> int:
+    cfg = launch(resolve_base(args.base), args.session, args.reopen, args.wait_seconds)
+    print(json.dumps({"session": args.session, "opencode_session": cfg["opencode"]["session"]}))
+    return 0
+
+
+def start_reviewer(base: Path, cfg: dict, sid: str, reopen: bool, wait_seconds: float) -> None:
+    """Start the reviewer in the right pane, bind its opencode session, flush backlogs."""
     ctl("session", "split", "on", "--target", sid)
     wait_until(lambda: find_session(sid).get("splitForegroundShell"), "the split shell",
-               args.wait_seconds)
-    pane = ("--stdin", "--target", sid, "--pane", "right")
-    ctl("session", "type", *pane, input_text=reviewer_command(base, cfg, args.reopen))
-    # Return as its own event: a TUI can read text+Enter in one burst as a paste
-    ctl("session", "type", *pane, input_text="\n")
+               wait_seconds)
+    pane =("--stdin", "--target", sid, "--pane", "right")
+    line = reviewer_command(base, cfg, reopen)
     kind = cfg["roles"]["reviewer"]["kind"]
-    wait_until(lambda: runs(find_session(sid).get("splitForeground"), kind),
-               f"the {kind} reviewer", args.wait_seconds)
+    for attempt in range(1, LAUNCH_ATTEMPTS + 1):
+        ctl("session", "type", *pane, input_text=line)
+        # Return as its own event: a TUI can read text+Enter in one burst as a paste
+        ctl("session", "type", *pane, input_text="\n")
+        try:
+            wait_until(lambda: runs(find_session(sid).get("splitForeground"), kind),
+                       f"the {kind} reviewer", wait_seconds)
+            break
+        except PairError:
+            node = find_session(sid)
+            # retype only into an idle shell: a garbled line failed and left the prompt
+            if (attempt == LAUNCH_ATTEMPTS or node.get("splitForeground")
+                    or not node.get("splitForegroundShell")):
+                raise
 
     cfg["opencode"]["session"] = wait_until(lambda: new_opencode_session(cfg, base),
-                                            "the opencode session", args.wait_seconds * 2)
+                                            "the opencode session", wait_seconds * 2)
+    if cfg["roles"]["writer"]["kind"] == "opencode":
+        # `stage` and a re-open resume the writer in this session
+        cfg["opencode_session"] = cfg["opencode"]["session"]
     save_config(base, cfg)
+    if kind == "opencode":
+        agents = [a.get("name") for a in http_json("GET", opencode_url(cfg, "/agent")) or []]
+        if REVIEWER_AGENT not in agents:
+            raise PairError(f"the opencode reviewer started without the {REVIEWER_AGENT} agent "
+                            "(OPENCODE_CONFIG not applied); it runs the default agent and model")
 
     for role in ROLES:
         if cfg["roles"][role]["kind"] == "opencode":
             # messages queued while no opencode session existed (a failed send, a re-open)
             flush_opencode(base, cfg, role)
-    print(json.dumps({"session": sid, "opencode_session": cfg["opencode"]["session"]}))
+
+
+# a reviewer gets this long to exit on SIGTERM before it gets SIGKILL
+KILL_GRACE_SECONDS = 5
+
+
+def process_command(pid: int) -> str:
+    return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True,
+                          text=True, check=False).stdout.strip()
+
+
+def is_reviewer_process(base: Path, cfg: dict, command: str) -> bool:
+    """Only the reviewer runs this command line: a recycled pid or a neighbour does not."""
+    if cfg["roles"]["reviewer"]["kind"] == "opencode":
+        # either stage agent: `stage` rewrites roles.reviewer.agent before the restart
+        return ("opencode" in command and f"--port {cfg['opencode']['port']}" in command
+                and any(f"--agent {agent}" in command
+                        for agent in (REVIEWER_AGENT, *LEGACY_REVIEWER_AGENTS)))
+    return "claude" in command and f"--settings {claude_settings_file(base, 'reviewer')}" in command
+
+
+def reviewer_pids(base: Path, cfg: dict) -> list[int]:
+    """The live reviewer processes; refuses a port held by anything but the reviewer."""
+    if cfg["roles"]["reviewer"]["kind"] == "opencode":
+        out = subprocess.run(["lsof", "-ti", f"tcp:{cfg['opencode']['port']}", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, check=False).stdout
+        pids = sorted({int(x) for x in out.split() if x.isdigit()})
+        for pid in pids:
+            command = process_command(pid)
+            if command and not is_reviewer_process(base, cfg, command):
+                raise PairError(f"port {cfg['opencode']['port']} is held by pid {pid}, which is "
+                                f"not the reviewer ({command[:120]}); not killing it")
+        return pids
+    out = subprocess.run(["pgrep", "-f", str(claude_settings_file(base, "reviewer"))],
+                         capture_output=True, text=True, check=False).stdout
+    # pgrep -f matches any command line with the path: keep only the reviewer itself
+    return [pid for pid in sorted({int(x) for x in out.split() if x.isdigit()})
+            if pid != os.getpid() and is_reviewer_process(base, cfg, process_command(pid))]
+
+
+def reviewer_alive(base: Path, cfg: dict) -> bool:
+    if cfg["roles"]["reviewer"]["kind"] == "opencode":
+        return opencode_up(cfg)
+    return bool(reviewer_pids(base, cfg))
+
+
+def kill_reviewer(base: Path, cfg: dict) -> list[int]:
+    pids = reviewer_pids(base, cfg)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + KILL_GRACE_SECONDS
+    while any(pid_alive(p) for p in pids) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    for pid in pids:
+        # check again: the pid may have been reused after the reviewer exited
+        if pid_alive(pid) and is_reviewer_process(base, cfg, process_command(pid)):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    return pids
+
+
+def close_threads_of(base: Path, session: str | None) -> list[str]:
+    """Close the threads of a dead reviewer: free their files, refuse late replies."""
+    now = int(time.time() * 1000)
+    closed = []
+    with threads_lock(base):
+        for path, meta in all_threads(base):
+            if meta["status"] != "closed" and meta.get("pair_session") == session:
+                meta.update(status="closed", closed_ms=now, restarted_ms=now)
+                save_meta(path, meta)
+                closed.append(meta["id"])
+    return closed
+
+
+def cmd_restart_reviewer(args: argparse.Namespace) -> int:
+    """Kill a dead or stuck reviewer and start it again in its pane with the catch-up brief."""
+    base = resolve_base(args.base)
+    cfg = load_config(base)
+    if args.check:
+        print(json.dumps({"alive": reviewer_alive(base, cfg)}))
+        return 0
+    seen = cfg.get("reviewer_generation", 0)
+    with open(pair_dir(base) / "restart.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        cfg = load_config(base)
+        if cfg.get("reviewer_generation", 0) != seen:
+            # another caller restarted it while this one waited for the lock
+            print(json.dumps({"restarted": False, "opencode_session": cfg["opencode"]["session"],
+                              "reason": "already restarted by another caller"}))
+            return 0
+        sid = cfg.get("agterm_session")
+        if not sid:
+            raise PairError("no agterm session in .pair/config.json (pair.py launch sets it)")
+        kind = cfg["roles"]["reviewer"]["kind"]
+        killed = kill_reviewer(base, cfg)
+        closed = []
+        if kind == "opencode":
+            closed = close_threads_of(base, cfg["opencode"].get("session"))
+            # a fresh server: new port, and launch binds the session it creates from now on
+            cfg["opencode"] = {"port": int(os.environ.get("PAIR_FREE_PORT") or free_port()),
+                               "session": None}
+            cfg["started_ms"] = int(time.time() * 1000)
+        else:
+            # the OpenCode writer keeps its server and session; only the old waiter goes
+            retire_waiter(base, "reviewer")
+        save_config(base, cfg)
+        try:
+            wait_until(lambda: not runs(find_session(sid).get("splitForeground"), kind),
+                       "the reviewer pane to return to its shell", args.wait_seconds)
+        except PairError:
+            pass  # start_reviewer retypes the start line into a pane that lost it
+        start_reviewer(base, cfg, sid, True, args.wait_seconds)
+        cfg["reviewer_generation"] = seen + 1
+        save_config(base, cfg)
+    print(json.dumps({"restarted": True, "killed": killed, "closed_threads": closed,
+                      "opencode_session": cfg["opencode"]["session"]}))
     return 0
 
 
@@ -784,8 +1652,8 @@ THREAD_LABELS = {"writer": "Chat from writer [{id}]:", "reviewer": "Chat from re
 THREAD_STATUSES = ("open", "agreed", "disputed", "closed")
 THREAD_BRIEF = (
     "PAIR THREAD {id}: you are the REVIEWER of this one decision only, in a subagent "
-    "session of the pair reviewer. Topic: {topic}. Files: {files}. Read {pair_md} and "
-    "follow its reviewer rules: you are READ-ONLY, and you check the proposal against the "
+    "session of the pair reviewer. Topic: {topic}. Files: {files}. Read {thread_md} and "
+    "follow it: you are READ-ONLY, and you check the proposal against the "
     "code and the project conventions before you answer. Answer ONLY with: python3 {py} "
     "thread send --base {base} --id {id} --key {key} --to writer --stdin, with a body that "
     "starts with "
@@ -885,7 +1753,6 @@ def flush_thread(base: Path, cfg: dict, path: Path, meta: dict) -> None:
     written to disk: the main reviewer reads .pair/ and must not answer the thread.
     """
     box = path / "inbox" / "reviewer"
-    url = opencode_url(cfg, f"/session/{meta['reviewer_session']}/prompt_async")
     agent = cfg["roles"]["reviewer"].get("agent", REVIEWER_AGENT)
     for msg in sorted(box.glob("*.md")):
         text = msg.read_text(encoding="utf-8").rstrip("\n")
@@ -894,8 +1761,9 @@ def flush_thread(base: Path, cfg: dict, path: Path, meta: dict) -> None:
             key = secrets.token_hex(8)
             text = THREAD_BRIEF.format(id=meta["id"], topic=meta["topic"], key=key,
                                        files=", ".join(meta["files"]), base=base,
-                                       pair_md=SKILL_DIR / "pair.md", py=PAIR_PY) + "\n\n" + text
-        http_json("POST", url, {"parts": [{"type": "text", "text": text}], "agent": agent})
+                                       thread_md=SKILL_DIR / "pair-thread.md",
+                                       py=PAIR_PY) + "\n\n" + text
+        prompt_session(cfg, meta["reviewer_session"], text, agent)
         if key:
             meta.update(briefed=True, key_sha256=key_hash(key))
             save_meta(path, meta)
@@ -933,8 +1801,14 @@ def cmd_thread_open(args: argparse.Namespace) -> int:
     try:
         flush_thread(base, cfg, path, meta)
     except PairError as exc:
-        raise PairError(f"thread {tid} is open, but its proposal did not reach the reviewer "
-                        f"({exc}); the next thread send delivers it") from exc
+        # a thread nobody answers only holds its files and its liaison: leave none
+        try:
+            http_json("DELETE", opencode_url(cfg, f"/session/{session}"))
+        except PairError:
+            pass
+        shutil.rmtree(path, ignore_errors=True)
+        raise PairError(f"thread not opened: its proposal did not reach the reviewer "
+                        f"subagent ({exc})") from exc
     print(json.dumps({"id": tid, "reviewer_session": session}))
     return 0
 
@@ -978,6 +1852,10 @@ def cmd_thread_resume(args: argparse.Namespace) -> int:
         if meta.get("pair_session") != cfg["opencode"].get("session"):
             raise PairError(f"the reviewer of thread {args.id} is gone with its pair session "
                             "(the reviewer was relaunched): run thread open", code=6)
+        if meta["status"] == "open":
+            # a second liaison would race the running one for the same replies
+            raise PairError(f"thread {args.id} is open: its liaison still runs. Send it the "
+                            "follow-up with SendMessage instead", code=5)
         refuse_overlap(base, meta["files"], skip=args.id)
         meta["status"] = "open"
         meta.pop("closed_ms", None)
@@ -1015,12 +1893,33 @@ def cmd_thread_close(args: argparse.Namespace) -> int:
     if args.status in ("agreed", "disputed"):
         if not args.stdin:
             raise PairError(f"--status {args.status} needs the decision on --stdin")
-        (path / "decision.md").write_text(read_body(args) + "\n", encoding="utf-8")
+        decision = read_body(args)
+        (path / "decision.md").write_text(decision + "\n", encoding="utf-8")
+        append_decision(base, f"{args.id} {args.status}: {meta['topic']} "
+                              f"[{', '.join(meta['files'])}]", decision)
     meta["status"] = args.status
     if args.status == "closed":
         meta["closed_ms"] = int(time.time() * 1000)
     save_meta(path, meta)
     print(json.dumps({"id": args.id, "status": args.status}))
+    return 0
+
+
+def decisions_file(base: Path) -> Path:
+    return pair_dir(base) / "decisions.md"
+
+
+def append_decision(base: Path, title: str, text: str) -> None:
+    """One log of every pair decision, read on catch-up instead of the whole message log."""
+    with open(decisions_file(base), "a", encoding="utf-8") as log:
+        log.write(f"## {title}\n\n{text}\n\n")
+
+
+def cmd_decided(args: argparse.Namespace) -> int:
+    """Log a decision settled on the main channel (no thread records it there)."""
+    base = resolve_base(args.base)
+    append_decision(base, f"main: {args.topic}", read_body(args))
+    print(json.dumps({"logged": str(decisions_file(base))}))
     return 0
 
 
@@ -1056,7 +1955,11 @@ COMMANDS = {"send": cmd_send, "wait": cmd_wait, "status": cmd_status,
             "init": cmd_init, "brief": cmd_brief, "launch": cmd_launch,
             "flush": cmd_flush, "inspect": cmd_inspect, "respawn": cmd_respawn,
             "user-prompt": cmd_user_prompt, "session-start": cmd_session_start,
-            "thread": cmd_thread, "threads": cmd_threads}
+            "guard": cmd_guard, "edit-guard": cmd_edit_guard, "idle": cmd_idle,
+            "restart-reviewer": cmd_restart_reviewer, "decided": cmd_decided,
+            "thread": cmd_thread, "threads": cmd_threads, "stage": cmd_stage,
+            "stage-handoff": cmd_stage_handoff, "claude-args": cmd_claude_args,
+            "opencode-args": cmd_opencode_args}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1072,10 +1975,19 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--stdin", action="store_true")
     source.add_argument("--file")
 
+    decided = sub.add_parser("decided", help="log a decision settled on the main channel")
+    decided.add_argument("--base")
+    decided.add_argument("--topic", required=True)
+    decided_source = decided.add_mutually_exclusive_group(required=True)
+    decided_source.add_argument("--stdin", action="store_true")
+    decided_source.add_argument("--file")
+
     wait = sub.add_parser("wait", help="block until a message arrives (Claude side)")
     wait.add_argument("--base")
     wait.add_argument("--role", choices=ROLES, required=True)
     wait.add_argument("--timeout", type=float, default=0, help="seconds; 0 waits forever")
+    wait.add_argument("--follow", action="store_true",
+                      help="keep listening after a batch (run it under the Monitor tool)")
 
     flush = sub.add_parser("flush", help="deliver the unread backlog of an opencode role")
     flush.add_argument("--base")
@@ -1102,6 +2014,19 @@ def build_parser() -> argparse.ArgumentParser:
     session_start.add_argument("--base")
     session_start.add_argument("--role", choices=ROLES, required=True)
 
+    guard = sub.add_parser("guard", help="PostToolUse/Stop hook: catch a waiter nobody re-armed")
+    guard.add_argument("--base")
+    guard.add_argument("--role", choices=ROLES, required=True)
+
+    edit_guard = sub.add_parser("edit-guard",
+                                help="PreToolUse hook: refuse an edit to a file of an open thread")
+    edit_guard.add_argument("--base")
+    edit_guard.add_argument("--role", choices=ROLES, required=True)
+
+    idle = sub.add_parser("idle", help="no work left: stop the waiter until new work arrives")
+    idle.add_argument("--base")
+    idle.add_argument("--role", choices=ROLES, required=True)
+
     status = sub.add_parser("status", help="roles, reachability and unread counts")
     status.add_argument("--base")
 
@@ -1121,6 +2046,13 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--reopen", action="store_true",
                         help="add the catch-up sentence to the reviewer brief")
     launch.add_argument("--wait-seconds", type=float, default=30)
+
+    restart = sub.add_parser("restart-reviewer",
+                             help="kill a dead or stuck reviewer and start it again")
+    restart.add_argument("--base")
+    restart.add_argument("--check", action="store_true",
+                         help="only print whether the reviewer is alive")
+    restart.add_argument("--wait-seconds", type=float, default=30)
 
     thread = sub.add_parser("thread", help="one decision discussed with a reviewer subagent")
     thread_sub = thread.add_subparsers(dest="thread_cmd", required=True)
@@ -1146,6 +2078,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     threads = sub.add_parser("threads", help="list the threads and their status")
     threads.add_argument("--base")
+
+    stage = sub.add_parser("stage", help="switch the task stage and restart the sessions on "
+                                         "its models")
+    stage.add_argument("stage", choices=STAGES)
+    stage.add_argument("--session-id", action="append", metavar="ROLE=ID",
+                       help="the conversation to resume when none is recorded")
+    stage.add_argument("--fresh", action="store_true",
+                       help="plan only: restart every agent in a new conversation on PLAN.md")
+    stage.add_argument("--foreground", action="store_true",
+                       help="restart from this process (only from outside the task session)")
+    stage.add_argument("--wait-seconds", type=float, default=30)
+
+    handoff = sub.add_parser("stage-handoff", help="internal: the detached restart of stage")
+    handoff.add_argument("--old", required=True, help="the agterm session to replace")
+    handoff.add_argument("--wait-seconds", type=float, default=30)
+
+    claude_args = sub.add_parser("claude-args", help="the claude flags of the task stage")
+    claude_args.add_argument("--role", choices=ROLES, default="writer")
+    claude_args.add_argument("--resume-id", help="the conversation of the role, given by the "
+                                                 "session that runs the launcher")
+
+    opencode_args = sub.add_parser("opencode-args",
+                                   help="the opencode writer flags of the task stage")
+    opencode_args.add_argument("--resume", action="store_true",
+                               help="no session recorded: take the newest of the base")
+
+    for p in (stage, handoff, claude_args, opencode_args):
+        p.add_argument("--base", required=True)
+        p.add_argument("--single", action="store_true",
+                       help="the record of a single session (.task-stage), even beside a pair")
+    for p in (stage, claude_args, opencode_args):
+        p.add_argument("--launcher", help="the project new-task.sh, recorded for stage")
+        p.add_argument("--branch", help="the task branch, with --launcher")
     return parser
 
 

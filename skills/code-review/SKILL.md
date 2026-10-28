@@ -1,11 +1,14 @@
 ---
 name: sadensmol-code-review
-description: "Review code changes for defects, missing docs, over-engineering, and weak tests. Use when: (1) user asks to review code, (2) user asks to review the current branch, (3) user asks for a code review before a PR or a commit, (4) user says 'review my code' or 'check my changes', (5) user gives a PR link or number and asks what is wrong with it."
+description: "Review code changes for defects, missing docs, over-engineering, and weak tests. Use when: (1) user asks to review code, (2) user asks to review the current branch, (3) user asks for a code review before a PR or a commit, (4) user says 'review my code' or 'check my changes', (5) user gives a PR link or number and asks what is wrong with it, (6) `task finish` runs it as its gate. Never start it on your own."
 ---
 
 # Review Code
 
-Five specialized reviewers examine one change, each on a single concern. They are fanned
+**Start only on an explicit user request or inside a user-started `task finish` (MUST
+FOLLOW).** Finished code, green tests or a skill's checkpoint never start it.
+
+Six specialized reviewers examine one change, each on a single concern. They are fanned
 out, one per area, by whatever mechanism the harness offers — never reviewed serially in
 your own context.
 
@@ -24,9 +27,9 @@ The workflow enforces this: each reviewer returns findings through a schema whos
 
 ## How the reviewers are dispatched
 
-Five reviewers, one per area, each in its own context. **Fan out** — one per area, in
+Six reviewers, one per area, each in its own context. **Fan out** — one per area, in
 parallel where the harness allows — and pass each one the **command** that produces the
-diff, never the diff text. Inlining it sends the whole diff six times, once into your own
+diff, never the diff text. Inlining it sends the whole diff seven times, once into your own
 context and once per reviewer, and overflows on a large branch.
 
 How to fan out is harness-specific, and the mechanics are not restated here:
@@ -41,7 +44,7 @@ rendered — is the same everywhere.
 ## How the reviewers load project skills
 
 **You** work out the skill list once, and the script passes it to every reviewer. This
-replaces each agent re-deriving it five times over.
+replaces each agent re-deriving it six times over.
 
 1. **One language skill per language in the diff — by file extension, NOT by cwd
    (MUST FOLLOW).** A diff routinely spans several languages and the cwd is only one of
@@ -99,7 +102,7 @@ when it:
 - is commented-out code.
 
 The **Quality** reviewer owns this — no other area reports it, so one junk comment
-produces one finding, not five. Default **P1**; P2 when the comment is merely redundant
+produces one finding, not six. Default **P1**; P2 when the comment is merely redundant
 rather than actively distracting; **P0** when it is factually wrong about the code it
 sits on, because a lying comment is worse than no comment.
 
@@ -399,10 +402,10 @@ When step 2 detected a re-review:
 
 | Mistake | Why it hurts |
 |---------|--------------|
-| Inlining the diff into the agent prompts | Sends the diff 6× and overflows on a large branch. Pass `diffCmd`. |
+| Inlining the diff into the agent prompts | Sends the diff 7× and overflows on a large branch. Pass `diffCmd`. |
 | Hardcoding `main` as the base | Repos on `master`/`develop` silently produce an empty or wrong diff. Resolve the base. |
-| Letting each reviewer re-derive the skill list | Five duplicated routing passes. Derive once, pass it in. |
+| Letting each reviewer re-derive the skill list | Six duplicated routing passes. Derive once, pass it in. |
 | Reporting CRITICAL/IMPORTANT/SUGGESTED | The scale is P0/P1/P2. Nothing else is a priority. |
 | Dropping a reviewer that returned `failed` | A silent gap reads as "clean". Name the area that did not run. |
 | Filing "add a doc comment" as a finding | The language skills forbid the comment. The fix for an unreadable hunk is a better name, not a sentence about it. |
-| Reviewing in your own context instead of fanning out | One context cannot hold five concerns and the diff. Dispatch. |
+| Reviewing in your own context instead of fanning out | One context cannot hold six concerns and the diff. Dispatch. |

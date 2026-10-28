@@ -1,4 +1,6 @@
-# gRPC Mocking Patterns
+# Mocking External Services
+
+Read this when a test needs a gRPC mock server (bufconn) or a WireMock HTTP stub.
 
 ## Overview
 
@@ -227,3 +229,111 @@ func (s *SomeTestSuite) TestWithMultipleMocks() {
 5. **Extract metadata** when testing authentication/authorization flows
 6. **Return realistic responses** - use appropriate status codes and error messages
 7. **Test both success and error paths** with different mock configurations
+
+## WireMock: shared server, no global Reset
+
+WireMock runs as **one long-lived server process per port** (e.g. core mock `:8081`, integration mock `:8082`), started once for the whole `go test ./...` job. **Every test in every package is a client of the same server** — the stub registry is global mutable state *inside the server*, not inside your Go test. Go runs different **packages** in parallel (no `-p 1`), so suites in `tests/api/v1`, `tests/privateapi/v1`, `tests/service`, … all hit the same WireMock concurrently.
+
+`wc.Reset()` in `go-wiremock` is `POST /__admin/mappings/reset` — it **wipes the ENTIRE server's stub registry** (and reloads only file-based mappings from `mappings/`). It does NOT delete "this test's stubs". So one suite's `Reset()` deletes the stubs another parallel suite just registered → that suite's request hits no stub → WireMock returns a plain-text `404 Not Found` / `500`.
+
+Symptoms of this race (they **move between runs**, same root cause — the tell-tale sign of the shared-Reset bug):
+- `[404]<provider> order http error: 404 Not Found` (file-based stub briefly gone during another suite's reset)
+- `failed to parse core error response: invalid character 'N'/'R'` (parser choking on WireMock's plain-text `Not Found` / request-not-matched body where JSON was expected)
+- Passes locally (packages effectively serialize) but fails in CI (packages run parallel).
+
+**Rule: delete only your own stub, never reset the server.** Capture the `*StubRule` returned by `wiremock.Get(...)/Post(...)`, register with `StubFor(stub)`, and clean up with `DeleteStub(stub)` (deletes by the rule's auto-generated UUID). `NewStubRule` assigns the UUID at build time, so the handle is valid for deletion.
+
+```go
+// Bad — wipes the whole shared server; races with every parallel package
+func (s *Suite) stubCoreProducts(externalID string, products []coreapiv1.ProductInfo) func() {
+    wc := wiremock.NewClient(tests.TestCoreWireMockURL)
+    err := wc.StubFor(wiremock.Get(wiremock.URLPathEqualTo("/api/v1/products")).
+        WithQueryParam("externalID", wiremock.EqualTo(externalID)).
+        WillReturnResponse(wiremock.NewResponse().WithStatus(200).WithJSONBody(products)))
+    s.Require().NoError(err)
+    return func() { s.Require().NoError(wc.Reset()) }   // ❌ global reset
+}
+
+// Good — capture the stub, delete only it
+func (s *Suite) stubCoreProducts(externalID string, products []coreapiv1.ProductInfo) func() {
+    wc := wiremock.NewClient(tests.TestCoreWireMockURL)
+    stub := wiremock.Get(wiremock.URLPathEqualTo("/api/v1/products")).
+        WithQueryParam("externalID", wiremock.EqualTo(externalID)).
+        WillReturnResponse(wiremock.NewResponse().WithStatus(200).WithJSONBody(products))
+    s.Require().NoError(wc.StubFor(stub))
+    return func() { s.Require().NoError(wc.DeleteStub(stub)) }   // ✅ scoped delete
+}
+// call site: defer s.stubCoreProducts(externalID, products)()
+```
+
+Corollaries:
+- **No `Reset()` in `SetupTest`/`SetupSuite` either.** If a suite re-stubbed a fixed path each test via `SetupTest` + `Reset()`, register the shared stub **once** in `SetupSuite` and remove it in `TearDownSuite` (`DeleteStub`); per-test stubs get a per-test `defer DeleteStub`.
+- **Make stubs naturally non-colliding** — match on a unique key per test (unique `externalID`, `session_id`, cart UUID) so leftover stubs from other tests never satisfy your request and you never *need* a global reset.
+- **Request-journal cleanup is the same** — if you assert call counts, scope with `DeleteRequestsByCriteria(matcher)` for your exact key, never `DeleteAllRequests()`.
+
+### WireMock lifecycle: setup → call → verify → clean up
+
+Every WireMock-backed test follows the same four steps. Skipping the cleanup of the **request journal** (not just the stub) is the usual cause of flaky call-count assertions.
+
+1. **Setup** — register the stub(s) the test needs (`StubFor`).
+2. **Call** — exercise the code that hits the mocked endpoint.
+3. **Verify** — assert the call count if relevant (`Verify` / `GetCountRequests`).
+4. **Clean up** — delete **both** the stub **and** its recorded requests, scoped to this test.
+
+**`Verify` checks an ABSOLUTE count, not "this test's calls".** `wc.Verify(r, n)` is literally `GetCountRequests(r) == n`, counting **every** journal entry matching `r` on the shared server. The journal is **never reset globally** (see above), so without per-stub journal cleanup the count accumulates across sibling tests and across reruns — `Verify(r, 1)` then passes only for the very first matching request ever and fails (count 2, 3, …) afterwards. The fix is **not** a delta hack; it's cleaning up the journal each test so the count genuinely reflects this test's one call:
+
+```go
+ws := wiremock.Post(wiremock.URLPathEqualTo("/api/v1/create-new-game")).
+    WithHeader("X-REQUEST-SIGN", wiremock.EqualTo(sign)).
+    WithBodyPattern(wiremock.EqualToJson(cBody)).
+    WillReturnResponse(wiremock.NewResponse().WithStatus(200).WithJSONBody(resp))
+s.Require().NoError(wc.StubFor(ws))             // setup
+defer func() {                                  // clean up: journal first, then stub
+    _, _ = wc.DeleteRequestsByCriteria(ws.Request())
+    _ = wc.DeleteStub(ws)
+}()
+
+// ... make the one call ...
+
+ok, err := wc.Verify(ws.Request(), 1)           // verify: now genuinely 1
+s.Require().NoError(err)
+s.Require().True(ok)
+```
+
+**Same endpoint, different behaviours → same suite, run in sequence.** When several tests stub the *same* endpoint (often the *same* request matcher) with *different* responses — e.g. `create-new-game` returning success / `account_blocked` / `500` — they must live in **one testify suite** so they run sequentially. testify runs a suite's methods one at a time, so each test's setup → call → verify → cleanup completes before the next begins; conflicting stubs/journal for the same matcher never coexist. Splitting them across packages (which Go runs in parallel) makes the stubs collide on the shared server.
+
+**Helper: a `StubScope` that owns register + scoped cleanup.** Wrap the client so cleanup of both stub and journal can't be forgotten. Never call `Reset()`/`DeleteAllRequests()` inside it.
+
+```go
+type StubScope struct {
+    *wiremock.Client
+    stubs []*wiremock.StubRule
+}
+
+func NewStubScope(c *wiremock.Client) *StubScope { return &StubScope{Client: c} }
+
+func (s *StubScope) StubFor(rule *wiremock.StubRule) error {
+    if err := s.Client.StubFor(rule); err != nil {
+        return err
+    }
+    s.stubs = append(s.stubs, rule)
+    return nil
+}
+
+// Cleanup removes each registered stub AND its journal requests, scoped to this
+// scope's matchers — other parallel packages' stubs/requests are untouched.
+func (s *StubScope) Cleanup() error {
+    var firstErr error
+    for _, st := range s.stubs {
+        if _, err := s.DeleteRequestsByCriteria(st.Request()); err != nil && firstErr == nil {
+            firstErr = err
+        }
+        if err := s.DeleteStub(st); err != nil && firstErr == nil {
+            firstErr = err
+        }
+    }
+    s.stubs = nil
+    return firstErr
+}
+// usage: wc := NewStubScope(wiremock.NewClient(url)); defer func(){ s.Require().NoError(wc.Cleanup()) }()
+```

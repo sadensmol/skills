@@ -1,6 +1,6 @@
 ---
 name: sadensmol-flutter-programming
-description: "Expert Flutter programming guidance for building performant, idiomatic Flutter apps. Use when (1) Writing or reviewing Flutter widget code, (2) Designing app architecture (MVVM layers, state management), (3) Building or refactoring screens, widgets, navigation, or theming, (4) Debugging jank, rebuilds, or layout issues, (5) Writing widget, golden, or integration tests, (6) Implementing animations, forms, lists, images, or platform integrations, (7) Making adaptive/responsive UIs, (8) Setting up Flutter projects and CI. Covers widget composition, const discipline, lifecycle, keys, state management decision tree, performance pitfalls (opacity/clipping/saveLayer), testing strategy, and common antipatterns. For pure Dart language rules (null safety, records, sealed classes, naming), defer to dart-programming."
+description: "Expert Flutter guidance for performant, idiomatic Flutter apps. Use when (1) writing or reviewing Flutter widget code, (2) designing app architecture (MVVM, state management, DI), (3) building screens, navigation, theming, forms, lists, images or platform channels, (4) debugging jank, rebuilds or layout issues, (5) writing widget, golden or integration tests, (6) setting up Flutter projects. For pure Dart language rules, defer to dart-programming."
 ---
 
 # Flutter Programming
@@ -19,16 +19,11 @@ Act as a senior Flutter engineer. Build for **60 fps on mid-range hardware**, no
 - `flutter build <apk|ipa|web> --release` — production builds.
 - `flutter pub outdated` / `flutter pub upgrade --major-versions` — dep hygiene.
 
-Minimum `analysis_options.yaml`:
+`analysis_options.yaml`: start from the `sadensmol-dart-programming` block with
+`include: package:flutter_lints/flutter.yaml`, then add:
 
 ```yaml
-include: package:flutter_lints/flutter.yaml
-
 analyzer:
-  language:
-    strict-casts: true
-    strict-inference: true
-    strict-raw-types: true
   errors:
     missing_required_param: error
     missing_return: error
@@ -37,15 +32,12 @@ linter:
   rules:
     - avoid_print                       # use logger
     - avoid_unnecessary_containers
-    - prefer_const_constructors
     - prefer_const_constructors_in_immutables
-    - prefer_const_declarations
     - prefer_const_literals_to_create_immutables
     - sized_box_for_whitespace          # SizedBox over Container for spacing
     - sort_child_properties_last        # child: trailing
     - use_build_context_synchronously   # catches async + BuildContext bugs
     - use_key_in_widget_constructors
-    - use_super_parameters
     - avoid_web_libraries_in_flutter
 ```
 
@@ -218,6 +210,7 @@ Rules:
 - **No allocation of heavy objects**: no `Dio()`, no `HttpClient()`, no regex compilation. Move to `initState` or inject via constructor.
 - **Read `Theme.of` / `MediaQuery.of` once** at the top and reuse — each call re-looks-up the inherited widget.
 - **Short-circuit expensive children** with `const` or extracted widgets.
+- **Keep `setState` local:** lift it to the smallest subtree that changes — a counter badge gets its own widget, not a whole-screen rebuild per keystroke.
 
 ```dart
 // Bad
@@ -436,334 +429,18 @@ Other `BuildContext` rules:
 - **Read `Theme.of`/`MediaQuery.of` in `build`, not `initState`** — `initState` has no ancestor-lookup guarantee.
 - Prefer `MediaQuery.sizeOf(context)` / `Theme.of(context)` over capturing the whole `MediaQueryData`/`ThemeData` if you only need one slice (Flutter 3.10+ added granular `.sizeOf`/`.textScalerOf`/etc. that rebuild less).
 
-## Theming
-
-Centralize theming in `core/theme`. Never hard-code colors, radii, or text styles in widgets.
-
-```dart
-final appLightTheme = ThemeData(
-  useMaterial3: true,
-  colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-  textTheme: GoogleFonts.interTextTheme(),
-  extensions: const [AppSpacing(sm: 8, md: 16, lg: 24)],
-);
-
-class AppSpacing extends ThemeExtension<AppSpacing> {
-  const AppSpacing({required this.sm, required this.md, required this.lg});
-  final double sm, md, lg;
-
-  @override
-  AppSpacing copyWith({double? sm, double? md, double? lg}) =>
-      AppSpacing(sm: sm ?? this.sm, md: md ?? this.md, lg: lg ?? this.lg);
-
-  @override
-  AppSpacing lerp(ThemeExtension<AppSpacing>? other, double t) {
-    if (other is! AppSpacing) return this;
-    return AppSpacing(
-      sm: lerpDouble(sm, other.sm, t)!,
-      md: lerpDouble(md, other.md, t)!,
-      lg: lerpDouble(lg, other.lg, t)!,
-    );
-  }
-}
-
-// Usage
-final spacing = Theme.of(context).extension<AppSpacing>()!;
-SizedBox(height: spacing.md);
-```
-
-- **Use Material 3** (`useMaterial3: true`) on all new apps.
-- **`ColorScheme.fromSeed`** for cohesive palettes; override only what needs overriding.
-- **Put design tokens** (spacings, radii, durations) in `ThemeExtension`, not global constants, so they vary by light/dark/brand.
-
-## Navigation
-
-Prefer **`go_router`** for declarative, deep-link-safe navigation. Imperative `Navigator.push` is fine for modals and one-off flows but doesn't scale to deep links, web URLs, or state restoration.
-
-```dart
-final router = GoRouter(
-  initialLocation: '/home',
-  redirect: (ctx, state) => authGuard(ctx, state),
-  routes: [
-    GoRoute(
-      path: '/home',
-      builder: (ctx, state) => const HomeScreen(),
-      routes: [
-        GoRoute(
-          path: 'memory/:id',
-          builder: (ctx, state) => MemoryScreen(id: state.pathParameters['id']!),
-        ),
-      ],
-    ),
-    GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
-  ],
-);
-```
-
-Rules:
-- **Name routes** as path constants in one file; never hard-code strings at call sites.
-- **`context.go('/path')`** replaces the stack; **`context.push('/path')`** pushes. Don't mix them up.
-- **Guard with `redirect`** for auth/feature-flag gating, not scattered `if (!loggedIn) ...` inside screens.
-
-## Lists — Always Lazy
-
-`ListView(children: [...])` and `Column(children: [...])` build **every child eagerly**. For anything that can grow, use builders.
-
-```dart
-// Good
-ListView.builder(
-  itemCount: tasks.length,
-  itemBuilder: (context, i) => TaskTile(task: tasks[i]),
-)
-
-// Good — separated lists
-ListView.separated(
-  itemCount: tasks.length,
-  separatorBuilder: (_, __) => const Divider(height: 1),
-  itemBuilder: (_, i) => TaskTile(task: tasks[i]),
-)
-
-// Good — mix fixed and lazy in one scroll view
-CustomScrollView(
-  slivers: [
-    const SliverAppBar(title: Text('Feed')),
-    SliverList.builder(
-      itemCount: tasks.length,
-      itemBuilder: (_, i) => TaskTile(task: tasks[i]),
-    ),
-  ],
-)
-```
-
-Rules:
-- **Always provide `itemCount`** when known — allows the framework to pre-compute scroll extents.
-- **Stable `ValueKey`** on items that can reorder/delete.
-- **Use `AutomaticKeepAliveClientMixin`** only for expensive items (media players, complex forms); default is the right default.
-- For nested scroll views, reach for **`CustomScrollView` + slivers**, not nested `ListView`s.
-
-## Images
-
-- **Always constrain image size** via `cacheWidth`/`cacheHeight` to the displayed logical pixel size × device pixel ratio — otherwise Flutter decodes at source resolution and trashes memory.
-- **`FadeInImage`** beats `Image` + `Opacity` for progressive loads.
-- **`precacheImage`** in `didChangeDependencies` for hero/above-the-fold assets.
-
-```dart
-Image.network(
-  url,
-  cacheWidth: 600,              // ← crucial
-  fit: BoxFit.cover,
-  loadingBuilder: (ctx, child, progress) => progress == null
-      ? child
-      : const Center(child: CircularProgressIndicator()),
-  errorBuilder: (ctx, err, stack) => const Icon(Icons.broken_image),
-)
-```
-
-For remote images with caching, disk cache, and retry, use `cached_network_image`.
-
-## Performance — The Real Gotchas
-
-### Opacity
-
-`Opacity` forces an offscreen render target (`saveLayer`) — expensive. Alternatives, in order:
-
-```dart
-// Best: bake alpha into the color
-Container(color: Colors.black.withValues(alpha: 0.5))  // Flutter 3.27+
-Container(color: Colors.black.withOpacity(0.5))        // older
-
-// Next: AnimatedOpacity — still uses saveLayer but only during animation
-AnimatedOpacity(opacity: visible ? 1 : 0, duration: 300.ms, child: ...)
-
-// Avoid for static alpha:
-Opacity(opacity: 0.5, child: bigSubtree)               // ❌
-```
-
-For fading images specifically, use `FadeInImage`.
-
-### Clipping
-
-`ClipRRect`/`ClipPath` also trigger `saveLayer`. Prefer `BoxDecoration(borderRadius:)` or `DecoratedBox` when possible, and only clip the smallest subtree.
-
-### `saveLayer` sources
-
-These widgets **may** trigger `saveLayer` — use sparingly on large subtrees:
-`Opacity`, `ShaderMask`, `ColorFilter`, `BackdropFilter`, `Chip` with alpha, `Text` with overflow shader.
-
-Turn on **“Highlight Offscreen Layers”** in DevTools performance overlay to find them.
-
-### `AnimatedBuilder` `child:` parameter
-
-If only part of the subtree is animated, pass the static part via `child:` so it isn't rebuilt each frame:
-
-```dart
-AnimatedBuilder(
-  animation: controller,
-  child: const ExpensiveStaticHeader(),      // built once
-  builder: (ctx, child) => Transform.rotate(
-    angle: controller.value * 2 * pi,
-    child: child,                             // reused
-  ),
-)
-```
-
-### Don't override widget `operator==`
-
-Flutter's diff algorithm assumes cheap `identical` checks. Custom `==` can turn rebuild into O(N²). Let the framework canonicalize `const` instances instead.
-
-### `setState` locality
-
-Lift `setState` to the **smallest** subtree that actually changes. If tapping a button only changes a counter badge, that badge should be its own widget with its own state — not the whole screen.
-
-### Profile, don't guess
-
-- `flutter run --profile` (never benchmark debug builds).
-- Open **DevTools → Performance → Timeline**. Anything > 16 ms (60 Hz) or > 8 ms (120 Hz) is a frame drop.
-- **Flame chart by frame**: the two bars are *UI (build + layout + paint)* and *Raster (GPU)*. Fix whichever is red.
-- Enable **“Track widget builds”** and find widgets that rebuild every frame unexpectedly.
-
-## Animations — Pick the Lowest Power Needed
-
-```
-Tween/value needs to animate?
-├── Implicit (single property, one-shot) → AnimatedContainer, AnimatedOpacity,
-│                                           AnimatedAlign, AnimatedPositioned…
-├── Explicit (reusable, looping, sequenced) → AnimationController + AnimatedBuilder
-├── Staggered / timeline → AnimationController + Interval curves
-├── Hero transitions between routes → Hero widget
-└── Physics-based (spring, fling, scrollable) → SpringSimulation + AnimationController
-```
-
-Rules:
-- **Always `vsync: this`** on `AnimationController`, and add `SingleTickerProviderStateMixin` (or `TickerProviderStateMixin` for multiple).
-- **Dispose the controller.**
-- **Use `Curves.*`** from the built-in set before writing custom curves.
-- **`RepaintBoundary`** wraps subtrees that repaint independently from their parent — useful around animated widgets inside a static parent.
-
-## Forms
-
-```dart
-final _formKey = GlobalKey<FormState>();
-final _emailCtrl = TextEditingController();
-final _pwdFocus = FocusNode();
-
-@override
-void dispose() {
-  _emailCtrl.dispose();
-  _pwdFocus.dispose();
-  super.dispose();
-}
-
-// In build:
-Form(
-  key: _formKey,
-  child: Column(
-    children: [
-      TextFormField(
-        controller: _emailCtrl,
-        keyboardType: TextInputType.emailAddress,
-        textInputAction: TextInputAction.next,
-        autofillHints: const [AutofillHints.email],
-        validator: (v) => (v == null || !v.contains('@')) ? 'Invalid email' : null,
-        onFieldSubmitted: (_) => _pwdFocus.requestFocus(),
-      ),
-      TextFormField(
-        focusNode: _pwdFocus,
-        obscureText: true,
-        autofillHints: const [AutofillHints.password],
-        validator: (v) => (v == null || v.length < 8) ? 'Min 8 chars' : null,
-      ),
-      FilledButton(
-        onPressed: () {
-          if (_formKey.currentState!.validate()) _submit();
-        },
-        child: const Text('Sign in'),
-      ),
-    ],
-  ),
-)
-```
-
-Rules:
-- **Always dispose controllers and focus nodes.**
-- **Set `keyboardType`, `textInputAction`, `autofillHints`** — free accessibility + UX wins.
-- **Validators return a message or `null`**, never throw.
-- **For big forms**, use a form library (`reactive_forms`, `flutter_form_builder`) — but only once you actually have >5 fields with cross-field rules.
-
-## Error Handling & Crash Reporting
-
-```dart
-void main() {
-  FlutterError.onError = (details) {
-    FlutterError.presentError(details);
-    logger.e('FlutterError', details.exception, details.stack);
-    CrashReporter.record(details.exception, details.stack);
-  };
-
-  PlatformDispatcher.instance.onError = (error, stack) {
-    logger.e('PlatformDispatcher', error, stack);
-    CrashReporter.record(error, stack);
-    return true;
-  };
-
-  ErrorWidget.builder = (details) => const _FriendlyError();
-
-  runApp(const MyApp());
-}
-```
-
-- **`FlutterError.onError`** catches errors in the framework callback stack (build, layout, paint).
-- **`PlatformDispatcher.instance.onError`** catches uncaught async errors in the root zone.
-- **`ErrorWidget.builder`** replaces the red error screen in release.
-- **Never swallow errors silently** — log + report, then fall back to a visible error state.
-
-## Accessibility
-
-Flutter's accessibility is good *if you help it*:
-
-- **Every interactive thing** needs a `Semantics` label or an underlying widget that provides one (`IconButton(tooltip:)`, `TextButton(child: Text(...))`). Bare `GestureDetector` on an `Icon` is invisible to screen readers.
-- **Minimum tap target 48×48 logical pixels** (Material guideline). Wrap small icons with `IconButton` or pad them.
-- **Color contrast ≥ 4.5:1** for body text, 3:1 for large text. Test with `Theme.of(context).colorScheme` combinations.
-- **Respect text scaling**: `MediaQuery.textScalerOf(context).scale(16)` — never hard-cap.
-- **`excludeSemantics: true`** on decorative images.
-- **Focus traversal**: use `FocusTraversalGroup` + `OrderedTraversalPolicy` for keyboard-heavy screens.
-
-Test with the **Accessibility Scanner** on Android and **Accessibility Inspector** on iOS/macOS.
-
-## Localization / i18n
-
-Use the built-in `flutter_localizations` + `gen_l10n` pipeline. Add to `pubspec.yaml`:
-
-```yaml
-flutter:
-  generate: true
-
-# l10n.yaml
-arb-dir: lib/l10n
-template-arb-file: app_en.arb
-output-localization-file: app_localizations.dart
-```
-
-Then `AppLocalizations.of(context)!.welcome` is type-safe, autocompleted, and extracted at build time. **Don't** roll your own `Map<String,String>` translation system — you lose pluralization, gender, and ICU format.
-
-## Responsive & Adaptive
-
-- **`LayoutBuilder`** when you need *parent* constraints (e.g. switch from list to grid above 600 px).
-- **`MediaQuery.sizeOf(context)`** when you need *window* size (dialogs, full-screen routing).
-- **Breakpoints** (Material 3 guidelines): compact < 600, medium 600–839, expanded 840–1199, large 1200–1599, extra-large 1600+.
-- **`NavigationBar` on phone, `NavigationRail` on tablet, `NavigationDrawer` on desktop** — the Material 3 adaptive scaffold pattern.
-- **`Theme.of(context).platform`** to branch on TargetPlatform (overridable in tests) — not `dart:io`'s `Platform.isIOS` which crashes on web.
-- **`SafeArea`** around root content; never assume status/nav bar insets.
-
-```dart
-@override
-Widget build(BuildContext context) {
-  final width = MediaQuery.sizeOf(context).width;
-  if (width >= 840) return const _ExpandedLayout();
-  if (width >= 600) return const _MediumLayout();
-  return const _CompactLayout();
-}
-```
+## App-Wide Conventions
+
+- **Theming:** centralize in `core/theme`; never hard-code colors, radii, or text styles in widgets. Material 3 + `ColorScheme.fromSeed`; design tokens (spacings, radii, durations) in a `ThemeExtension`, not global constants.
+- **Navigation:** `go_router`; route paths as constants in one file, never strings at call sites; gate auth/feature flags with `redirect`, not `if (!loggedIn)` inside screens. `context.go` replaces the stack, `context.push` pushes.
+- **Lists:** anything that can grow uses a lazy builder (`ListView.builder`, `SliverList.builder`) with `itemCount` and a stable `ValueKey` on items; nested scrolling uses `CustomScrollView` + slivers.
+- **Images:** always set `cacheWidth`/`cacheHeight` to the displayed size; remote images use `cached_network_image`.
+- **Forms:** dispose every controller and focus node; set `keyboardType`, `textInputAction`, `autofillHints`; validators return a message or `null`, never throw; add a form library only past ~5 fields with cross-field rules.
+- **Errors:** wire `FlutterError.onError`, `PlatformDispatcher.instance.onError`, and a release `ErrorWidget.builder` to the logger and crash reporter; never swallow an error — log, report, show a visible error state.
+- **Accessibility:** tap targets ≥ 48×48; `Semantics`/`tooltip` on interactive icons (a bare `GestureDetector` on an `Icon` is invisible to screen readers); never cap text scaling.
+- **i18n:** `flutter_localizations` + `gen_l10n`; no hand-rolled translation maps, no raw user-visible strings.
+- **Adaptive:** breakpoints at 600 / 840; branch on `Theme.of(context).platform` or `kIsWeb`, never `dart:io` `Platform.isXXX` (crashes on web); `SafeArea` at the root.
+- **Logging:** no `print` — `logger` or `debugPrint`.
 
 ## Testing
 
@@ -957,26 +634,6 @@ If the log shows **multiple `CREATED` lines** from a single screen navigation, o
 - **Version your method names** (`"v1/getBattery"`) — platform code ships on a different cadence from Dart.
 - **Handle `MissingPluginException`** — happens on hot restart and on platforms that don't implement the channel.
 - Prefer **Pigeon** for anything non-trivial: generates typed host/Dart code from one IDL, eliminates stringly-typed bugs.
-
-## Common Antipatterns
-
-| Antipattern | Why it's bad | Fix |
-|---|---|---|
-| `Widget _buildFoo()` helpers | No `const`, no DevTools name, rebuilds with parent | Extract `StatelessWidget` |
-| `GlobalKey` everywhere | Defeats widget tree invariants, leaks, perf hit | Use `ValueKey` / lift state up |
-| Storing `BuildContext` in fields | Stale after rebuild/dispose → crash | Pass `context` into method calls |
-| API call in `build()` | Hammers network, causes rebuild loops | Move to `initState` / VM |
-| Rebuilding whole screen on keystroke | Jank on low-end devices | Split into smaller widgets + local state |
-| `FutureBuilder` with inline future | New future each build → refetch each rebuild | Compute in the VM (it knows when the input changed); View reads the result |
-| View memoizes a derived value to survive rebuilds | Derivation + service reads leaked into the View; cache only compensates for that | Move the derivation to the VM — the cache then disappears |
-| `dart:io Platform.isXXX` | Crashes on web | `Theme.of(context).platform` or `kIsWeb` |
-| `setState` after `await` w/o `mounted` | `setState() called after dispose` crash | Guard with `if (!mounted) return;` |
-| `print` in production | Strips PII to logs, slow | `logger` package or `debugPrint` |
-| Hardcoded colors / sizes in widgets | Inconsistent, no dark-mode | `Theme.of(context)` + `ThemeExtension` |
-| `Opacity` for static alpha | Forces `saveLayer` | Bake alpha into color |
-| Eager `ListView(children: [...])` | Builds every child | `ListView.builder` |
-| Custom `operator==` on widgets | Breaks framework diff optimization | Delete it; rely on `const` |
-| VM owns a Timer / poll / subscription | Pop-back can rebuild the route → new VM; Timer fires on the orphaned old VM, UI listens to the new one, `notifyListeners` reaches no one | Move the work to a lifetime-scoped `ChangeNotifier` service; VM subscribes on construct, unsubscribes on dispose |
 
 ## Flutter Review Checklist
 

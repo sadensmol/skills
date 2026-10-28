@@ -3,28 +3,26 @@
 Read this only in Claude Code. The neutral instructions live in `SKILL.md`; this file is
 one harness's answer to `fan-out` from the runtime contract.
 
-Use the `Workflow` tool with the script below. Do not launch the five agents by hand.
+Use the `Workflow` tool with the script below. Do not launch the six agents by hand.
 
 - **You are already opted in.** The `Workflow` tool refuses to run without explicit user
   opt-in; "the user invoked a skill whose instructions tell you to call Workflow" *is* that
   opt-in. Do not ask for permission.
-- **The model comes from the agent frontmatter — do NOT pass one per call.** The five agent
-  files in `agents/code-reviewer/` carry `model: sonnet` + `effort: high`, which is what this
-  harness reviews on. Those files are **shared with OpenCode** (`~/.config/opencode/agents`
-  symlinks to the same directory), so an `openai/*` model must never be written into them: it
-  belongs in OpenCode's own `opencode.jsonc`, whose per-agent `model`/`variant` overrides the
-  frontmatter anyway. A fan-out that fails with "There's an issue with the selected model"
-  means that rule was broken — fix the frontmatter rather than overriding `model` in the
-  script.
+- **Pass `model: 'claude-opus-5-5'` (the main model, task skill → *Stages*) and
+  `effort: 'high'` on every reviewer call** (the script below,
+  and each `Agent` call in the fallbacks). The six agent files in `agents/code-reviewer/`
+  carry no `model`: they are **shared with OpenCode** (`~/.config/opencode/agents` symlinks
+  to the same directory), and a frontmatter `model` overrides OpenCode's `opencode.jsonc`.
+  Never write a `model` into those files.
 - **Findings come back structured**, so the report is assembled from data rather than from
-  five prose blobs.
+  six prose blobs.
 - **It runs in the background.** It returns a run id immediately and a task notification
   when it finishes; `/workflows` shows live progress.
-- **If the `Workflow` tool is unavailable**, launch the same five agents with the `Agent`
+- **If the `Workflow` tool is unavailable**, launch the same six agents with the `Agent`
   tool in a **single message**, using the same briefs.
 - **In pair mode (you are the pair WRITER), do not use `Workflow`.** It notifies only once,
-  when all five are done, so the pair reviewer could not discuss each report as it lands.
-  Launch the five agents with the `Agent` tool in a **single message**, all in the
+  when all six are done, so the pair reviewer could not discuss each report as it lands.
+  Launch the six agents with the `Agent` tool in a **single message**, all in the
   background. Each one's `subagent_type` is its `type` in `REVIEWERS`, and its prompt is
   the text `brief()` below builds, filled in by hand from your inputs. Add to each brief:
   end with the findings as a JSON object in the `FINDINGS_SCHEMA` shape. Each agent notifies
@@ -39,9 +37,9 @@ Local and the PR path — only `args` differ.
 ```javascript
 export const meta = {
   name: 'code-review',
-  description: 'Five specialized reviewers over one diff, returning structured P0/P1/P2 findings',
+  description: 'Six specialized reviewers over one diff, returning structured P0/P1/P2 findings',
   phases: [
-    { title: 'Review', detail: 'docs, implementation, quality, simplification, testing — in parallel' },
+    { title: 'Review', detail: 'docs, implementation, quality, security, simplification, testing — in parallel' },
   ],
 }
 
@@ -89,10 +87,18 @@ const REVIEWERS = [
   {
     area: 'Quality',
     type: 'quality',
-    focus: 'bugs, security issues, and code quality. You also own the linter — no other reviewer runs it. Find the lint command in the project docs or Makefile, run it, and report only hits in changed files, in the `linter` field. You also own junk comments — no other reviewer reports them: flag every comment this diff ADDS to a HAND-WRITTEN file that restates the code below it, narrates an obvious constructor/getter/field/const, banners a section, talks about the change itself, or is commented-out code. Generated files are exempt — skip them',
-    p0: 'Security vulnerabilities, linter errors, race conditions, resource leaks, crashes or panics, or a comment that is factually wrong about the code it sits on.',
+    focus: 'bugs and code quality. Security vulnerabilities belong to the Security reviewer — do not report them. You also own the linter — no other reviewer runs it. Find the lint command in the project docs or Makefile, run it, and report only hits in changed files, in the `linter` field. You also own junk comments — no other reviewer reports them: flag every comment this diff ADDS to a HAND-WRITTEN file that restates the code below it, narrates an obvious constructor/getter/field/const, banners a section, talks about the change itself, or is commented-out code. Generated files are exempt — skip them',
+    p0: 'Linter errors, race conditions, resource leaks, crashes or panics, or a comment that is factually wrong about the code it sits on.',
     p1: 'Linter warnings, quality issues, missing error handling, compatibility risks, junk comments the diff adds.',
     p2: 'Style improvements, minor refactors, non-critical linter suggestions, merely redundant comments.',
+  },
+  {
+    area: 'Security',
+    type: 'security',
+    focus: 'security vulnerabilities that cross a real trust boundary. Load the security-audit skill and apply it in guidance mode only: its core principles, ATTACK-CLASSES.md, and the domain companions that match the diff. Never start its full audit workflow and never write audit files. Static only — never build, run or test the target code, and never probe a deployed or shared service. Every finding names the lower-trust principal, the input it controls, the control, the boundary crossed, and the affected resource with its concrete result',
+    p0: 'security-audit severity critical or high: authentication or authorization bypass, cross-tenant read or write, injection reaching code or data-store execution, remote code execution, or a secret committed in the diff.',
+    p1: 'security-audit severity medium: a real boundary violation with limited blast radius or uncommon preconditions; also a needs_validation hypothesis blocked on a fact outside the repo, whose fix names the missing fact and a safe owner check.',
+    p2: 'security-audit severity low or informational: disclosure of non-secret internals, or an effect needing sustained effort for minimal gain.',
   },
   {
     area: 'Simplification',
@@ -162,6 +168,8 @@ const raw = await parallel(
       label: `review:${r.area}`,
       phase: 'Review',
       agentType: r.type,
+      model: 'claude-opus-5-5',
+      effort: 'high',
       schema: FINDINGS_SCHEMA,
     }).then((res) => (res ? { area: r.area, ...res } : null)),
   ),

@@ -33,7 +33,7 @@ Not now, not "temporarily", not in an example.
 - A leaked secret is not fixed by a follow-up commit — it stays in history. Rotate
   it, then rewrite history.
 
-## 2. No project-specific knowledge in `skills/`, `agents/`, `commands/` or `plugin/`
+## 2. No project-specific knowledge in `skills/`, `agents/`, `commands/`, `harness/` or `plugin/`
 
 A `sadensmol-` skill is the **generic layer**. It must not contain:
 

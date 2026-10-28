@@ -47,6 +47,7 @@ export const PairPanePlugin = async ({ directory, serverUrl }) => {
         .trim()
       await call("POST", "/tui/select-session", { sessionID: pair })
       if (text) {
+        // pair.py stage rewrites roles.reviewer.agent: the agent of the task stage
         const agent = cfg.roles?.reviewer?.agent
         await call("POST", `/session/${pair}/prompt_async`, {
           parts: [{ type: "text", text: `Message from the user: ${text}` }],

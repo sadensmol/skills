@@ -147,9 +147,9 @@ docker exec <ollama-ctr> ollama ps                  # loaded models + PROCESSOR 
 ## Bundled NVIDIA device skills
 
 Apache-2.0, from [NVIDIA-AI-IOT/jetson-device-skills](https://github.com/NVIDIA-AI-IOT/jetson-device-skills)
-— also published verbatim under [NVIDIA/skills](https://github.com/NVIDIA/skills/tree/main/skills)
-(the copies here are byte-identical to `NVIDIA/skills@main`). See
-`references/nvidia-jetson-device-skills/`. Load the one that fits the task —
+— also published under [NVIDIA/skills](https://github.com/NVIDIA/skills/tree/main/skills).
+Only the skill bodies (`SKILL.md`, `references/`, `scripts/`) and the `LICENSE` are
+vendored here, in `references/nvidia-jetson-device-skills/`. Load the one that fits the task —
 each has its own `SKILL.md` and helper scripts:
 
 | Skill | Use for |
@@ -164,9 +164,6 @@ each has its own `SKILL.md` and helper scripts:
 | `jetson-speculative-decoding` | EAGLE-3 / draft-model spec decoding for vLLM when TPOT-bound. |
 | `jetson-package` | Jetson container / wheel / PyPI-index choices; Orin sm_87 vs Thor sm_110. |
 | `jetson-video-setup` / `-capability` / `-recipe` / `-benchmark` / `-pipeline` | NVENC/NVDEC + PyNvVideoCodec setup, capability checks, plans, benchmarks, pipelines. |
-
-There's also an agent, `references/nvidia-jetson-device-skills/../agents/jetson-perf-investigator.md`
-(perf triage) in the upstream repo.
 
 **Note:** these skills assume they run **on the Jetson**. From a dev machine, run
 their commands over the SSH recipe above.

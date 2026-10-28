@@ -88,7 +88,10 @@ done
 claude plugin list > /tmp/plugins.txt 2>&1
 assert_has /tmp/plugins.txt "$NS@$NS" "plugin $NS@$NS is installed"
 
-CLAUDE_PLUGIN_ROOT="$REPO/plugin" "$REPO/plugin/hooks/skill-activation.sh" > /tmp/hook.txt 2>&1
+# A project repository's hook injects only for a session it recognises, so feed it the
+# hook JSON of a session sitting in this repository.
+hook_in() { printf '{"cwd":"%s"}' "$REPO"; }
+hook_in | CLAUDE_PLUGIN_ROOT="$REPO/plugin" "$REPO/plugin/hooks/skill-activation.sh" > /tmp/hook.txt 2>&1
 assert_has /tmp/hook.txt "name: $NS-router" "UserPromptSubmit hook injects the router"
 # Only the repository that ships the runtime contract injects it; a project
 # repository layering on a base deliberately leaves that to the base's hook.
@@ -134,6 +137,16 @@ if [ -x "$REPO/harness/opencode/install.test.sh" ]; then
   else
     bad "harness/opencode/install.sh: $(tail -1 /tmp/oc-install-test.txt)" \
         "$(grep -c '✗' /tmp/oc-install-test.txt) failing — see /tmp/oc-install-test.txt"
+  fi
+fi
+
+# The Claude Code status lines: the settings merge and both scripts, hermetic too.
+if [ -x "$REPO/harness/claude-code/install.test.sh" ]; then
+  if "$REPO/harness/claude-code/install.test.sh" > /tmp/cc-install-test.txt 2>&1; then
+    ok "harness/claude-code/install.sh: $(tail -1 /tmp/cc-install-test.txt)"
+  else
+    bad "harness/claude-code/install.sh: $(tail -1 /tmp/cc-install-test.txt)" \
+        "$(grep -c '✗' /tmp/cc-install-test.txt) failing — see /tmp/cc-install-test.txt"
   fi
 fi
 
@@ -225,7 +238,7 @@ assert_has "$ROUTER_REPO" "$MARK" "edit through ~/.agents/skills lands in the re
 oc_skills
 jq -r --arg n "$NS-router" '.[] | select(.name==$n) | .content' /tmp/oc-skills.json > /tmp/oc-router.txt
 assert_has /tmp/oc-router.txt "$MARK" "opencode reads the edited file live (no re-install)"
-CLAUDE_PLUGIN_ROOT="$REPO/plugin" "$REPO/plugin/hooks/skill-activation.sh" > /tmp/hook2.txt 2>&1
+hook_in | CLAUDE_PLUGIN_ROOT="$REPO/plugin" "$REPO/plugin/hooks/skill-activation.sh" > /tmp/hook2.txt 2>&1
 assert_has /tmp/hook2.txt "$MARK" "the Claude Code hook injects the edited file live"
 sed -i "/$MARK/d" "$ROUTER_REPO"
 

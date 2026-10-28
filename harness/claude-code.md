@@ -21,6 +21,20 @@ choices are not exclusive. Options carry an optional `preview` for side-by-side 
 Not available in this build. Keep the plan in your reply text instead, and do not claim a
 todo list exists.
 
+## browser
+
+The same Playwright MCP extension servers as OpenCode: the workspace server the project's browser
+policy names when one is configured, otherwise `playwright-extension`. Read that policy before the
+first browser call. Claude in Chrome (`mcp__claude-in-chrome__*`) is not the authenticated browser —
+never use it for a project page.
+
+1. The server's `browser_tabs` with `action: "list"`, then `action: "select"` an existing tab.
+2. Its `browser_navigate` only when needed.
+3. Never create or close a tab unless the user asks.
+
+The named server is missing from this session → stop and say so. Never fall back to Claude in
+Chrome, WebFetch, `curl` or another browser.
+
 ## run-background-shell
 
 `Bash` with `run_in_background: true`. It keeps running across turns and re-invokes you when
@@ -34,7 +48,26 @@ in the background by default; pass `run_in_background: false` only when your nex
 depends on the result and nothing else could usefully happen meanwhile.
 
 `ListAgents` shows what is running, and `SendMessage` continues one with its context intact
-— a new `Agent` call always starts fresh.
+— a new `Agent` call always starts fresh. A skill's lane is `subagent_type:
+"general-purpose"` on the default model unless it names another agent. `subagent_type: "fork"` instead inherits the
+whole conversation, and every one of its turns re-reads it: never use it for a skill's
+lane or branch; give a fresh agent a brief instead.
+
+## cheap-subagent
+
+`Agent` with `subagent_type: "general-purpose"`, `model: "sonnet"` and `effort: "high"`.
+
+## planner-subagent
+
+`Agent` with `subagent_type: "general-purpose"`, `model: "opus"` and `effort: "xhigh"`.
+`SendMessage` continues the same planner for a revision.
+
+## main-subagent
+
+`Agent` with `subagent_type: "general-purpose"`, no `model:` (it runs on the session
+model, the model of the task stage) and `effort: "high"`. `--model` and `--effort` are
+launch flags: a running session cannot switch its model, so a stage change restarts the
+session (task skill → *Stages*).
 
 ## fan-out
 

@@ -1,6 +1,6 @@
 ---
 name: sadensmol-swift-programming
-description: "Expert Swift programming guidance for building idiomatic, safe, modern Swift apps and libraries across Apple platforms (iOS, iPadOS, macOS, watchOS, tvOS, visionOS) and server/CLI. Use when (1) Writing or reviewing Swift code, (2) Setting up Swift packages or Xcode projects, (3) Designing types (structs, enums, protocols, generics) and value-vs-reference decisions, (4) Working with optionals, error handling, or the Swift API Design Guidelines, (5) Writing modern concurrency (async/await, actors, structured concurrency, Sendable), (6) Building SwiftUI (mobile + desktop) or interoping with UIKit/AppKit, (7) Managing memory (ARC, weak/unowned, capture lists), (8) Writing tests (Swift Testing / XCTest), (9) Refactoring or debugging Swift. Enforces value semantics, immutability, protocol-oriented design, data-race safety, and idiomatic naming."
+description: "Expert Swift guidance for idiomatic, safe, modern Swift on Apple platforms (iOS, macOS, watchOS, tvOS, visionOS) and server/CLI. Use when writing, reviewing, refactoring or debugging Swift; setting up Swift packages or Xcode projects; designing types, protocols, generics; optionals and error handling; async/await, actors, Sendable; SwiftUI or UIKit/AppKit interop; ARC and capture lists; Swift Testing / XCTest."
 ---
 
 # Swift Programming

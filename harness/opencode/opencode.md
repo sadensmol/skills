@@ -49,7 +49,7 @@ can be denied by config, in which case keep the plan in your reply.
 
 Use Playwright MCP with `--extension` to access the user's open browser tabs and their
 authenticated sessions. Choose the workspace-specific server when one is configured
-(for example, `playwright-swipegames`); otherwise use `playwright-extension`. Call its
+(for example, `playwright-<project>`, named by the project's own skill); otherwise use `playwright-extension`. Call its
 `browser_tabs` tool to list and select an existing tab, then navigate that tab with its
 `browser_navigate` tool. Do not create or close a tab unless the user explicitly requests
 it. A profile-specific `PLAYWRIGHT_MCP_EXTENSION_TOKEN` bypasses connection approval but
@@ -67,8 +67,30 @@ output to a file and read that. Nothing notifies you when it exits.
 The `task` tool — "launch a new agent to handle complex, multistep tasks autonomously".
 **Foreground is the default**, and the harness itself says to use it when you need the
 result before continuing. The agent id is the filename of its definition, so the reviewers
-in `agents/code-reviewer/` are `quality`, `testing`, `documentation`, `implementation`,
-`simplification`.
+in `agents/code-reviewer/` are `quality`, `security`, `testing`, `documentation`,
+`implementation`, `simplification`.
+
+## cheap-subagent
+
+The `task` tool with `subagent_type: "runner"`. The global config defines that agent on a
+small model at the `high` variant, with edits denied. If no `runner` agent exists, stop
+and report the missing agent.
+
+## planner-subagent
+
+The `task` tool with `subagent_type: "planner"`. The global config defines that agent on
+the planning model at the `high` variant, with edits allowed. Pass its `task_id` to
+continue the same planner for a revision. If no `planner` agent exists, stop and report
+the missing agent.
+
+## main-subagent
+
+The `task` tool with `subagent_type: "general"`. It has no model of its own, so it runs on
+the model of the session that starts it: the model of the task stage. The global config
+must also define the primary agent `planning` beside `main`, `runner` and `planner`: the
+planning model at the `high` variant, with the permissions of `main`. A task session
+starts on `planning` in the PLAN stage and on `main` in IMPL (task skill → *Stages*). If
+`planning` does not exist, stop and report the missing agent.
 
 ## fan-out
 

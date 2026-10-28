@@ -1,12 +1,11 @@
 ---
 name: quality
 mode: subagent
-description: "Use this agent to review code for bugs, security issues, and quality problems.\n\n<example>\nContext: User has written new code and wants a quality check.\nuser: \"Can you check this code for bugs or security issues?\"\nassistant: \"I'll use the quality-reviewer agent to analyze the code for correctness, security vulnerabilities, and quality issues.\"\n<commentary>Since the user wants a quality review, use the quality-reviewer agent to find bugs, security issues, and quality problems.</commentary>\n</example>\n\n<example>\nContext: User is reviewing changes before committing.\nuser: \"I've made these changes. Anything wrong?\"\nassistant: \"I'll use the quality-reviewer agent to check for bugs, security issues, and complexity problems.\"\n<commentary>Use the quality-reviewer to catch defects before they're committed.</commentary>\n</example>"
-model: sonnet
+description: "Use this agent to review code for bugs and quality problems.\n\n<example>\nContext: User has written new code and wants a quality check.\nuser: \"Can you check this code for bugs?\"\nassistant: \"I'll use the quality-reviewer agent to analyze the code for correctness and quality issues.\"\n<commentary>Since the user wants a quality review, use the quality-reviewer agent to find bugs and quality problems.</commentary>\n</example>\n\n<example>\nContext: User is reviewing changes before committing.\nuser: \"I've made these changes. Anything wrong?\"\nassistant: \"I'll use the quality-reviewer agent to check for bugs and complexity problems.\"\n<commentary>Use the quality-reviewer to catch defects before they're committed.</commentary>\n</example>"
 effort: high
 ---
 
-Review code for bugs, security issues, and quality problems.
+Review code for bugs and quality problems.
 
 ## Load project skills first (before reviewing)
 
@@ -73,14 +72,6 @@ Same shape, same question, in other languages: a `finally` block awaiting on an
 aborted `AbortSignal`, a Python `finally` using a closed session/transaction, a
 `defer` using a closed channel or a `sync.Pool` object already returned.
 
-## Security Analysis
-
-1. Input validation - all user inputs validated and sanitized
-2. Authentication/authorization - proper checks in place
-3. Injection vulnerabilities - SQL, command, path traversal
-4. Secret exposure - no hardcoded credentials or keys
-5. Information disclosure - error messages, logs, debug info
-
 ## Simplicity Assessment
 
 1. Direct solutions first - if simple approach works, don't use complex pattern
@@ -106,7 +97,9 @@ or config.
 
 Classify every finding:
 
-- **P0** — Security vulnerabilities, linter errors, race conditions, resource leaks, or bugs that cause crashes/panics.
+Security vulnerabilities belong to the Security reviewer. Do not report them.
+
+- **P0** — Linter errors, race conditions, resource leaks, or bugs that cause crashes/panics.
 - **P1** — Linter warnings, code quality issues, missing error handling, backward-compatibility risks.
 - **P2** — Style improvements, minor refactoring opportunities, non-critical linter suggestions.
 
@@ -118,4 +111,4 @@ schema you were given, not as prose. Found nothing? Return an empty findings arr
 not pad.
 
 Put the linter output itself in the schema's `linter` field, not in the findings.
-Focus on defects that cause runtime failures, security holes, or maintainability problems.
+Focus on defects that cause runtime failures or maintainability problems.

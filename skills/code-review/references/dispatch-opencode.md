@@ -6,17 +6,16 @@ harness's answer to `fan-out` from the runtime contract.
 There is no orchestration script here, so you are the orchestrator.
 
 The reviewers' models live in **`opencode.jsonc`**, not in the agent markdown: its
-`agent.<name>.model` / `variant` entries are this harness's place for an `openai/*` model and
-they override the frontmatter. The shared `agents/code-reviewer/*.md` files (the same
-directory Claude Code reads) carry that harness's `model: sonnet` + `effort: high` — leave
-them alone.
+`agent.<name>.model` / `variant` entries are this harness's place for an `openai/*` model.
+The shared `agents/code-reviewer/*.md` files (the same directory Claude Code reads) carry no
+`model`, because a frontmatter `model` overrides `opencode.jsonc` — never add one.
 
 1. Build each reviewer's brief exactly as `SKILL.md` describes: its area, its focus, its
    P0/P1/P2 definitions, the skills it must load, and the **diff command** — never the diff
    text.
 2. Issue one `task` call per reviewer, agent ids `documentation`, `implementation`,
-   `quality`, `simplification`, `testing`. Foreground is the default and is the right choice
-   here: you need all five results before you can write the report.
+   `quality`, `security`, `simplification`, `testing`. Foreground is the default and is the right choice
+   here: you need all six results before you can write the report.
    - With `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` set you may pass
      `background: true` per reviewer and be notified as each finishes. Without it, run them
      in the foreground; do not sleep or poll either way.
@@ -31,5 +30,5 @@ them alone.
 
 **In pair mode (you are the pair WRITER)**, hand each reviewer's findings to the pair
 reviewer as soon as you have them, as `pair.md` says. With background subagents, do it
-as each one finishes. Without them, all five return together: send one report per area,
+as each one finishes. Without them, all six return together: send one report per area,
 in the order above, without waiting for a reply between them.

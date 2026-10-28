@@ -1,8 +1,11 @@
 # Fixtures and Test Data Management
 
-## Overview
+Read this when you add or use a fixture, create dynamic test data, or a query
+misses fixture rows because of partition pruning.
 
-The platform uses two approaches for test data: **fixtures** for static testing and **dynamic data** for tests requiring on-the-fly creation.
+Two approaches: **fixtures** for read-only tests and **dynamic data** for tests
+that create, modify, or delete. The decision rule and the cleanup rules are in
+SKILL.md → *Test Data*.
 
 ## Fixtures (Static Test Data)
 
@@ -142,22 +145,6 @@ func (s *FeatureTestSuite) TestWithRepositoryData() {
 }
 ```
 
-### Cleanup is Critical
-
-**Always use defer** to ensure cleanup happens even if test fails:
-
-```go
-// Good - cleanup happens even on test failure
-sessionID := s.CreateSession()
-defer s.DeleteSession(sessionID)
-s.RunTest(sessionID)
-
-// Bad - cleanup might be skipped if test fails
-sessionID := s.CreateSession()
-s.RunTest(sessionID)
-s.DeleteSession(sessionID)  // Never reached if RunTest fails
-```
-
 ## Partition Pruning and Test Data
 
 ### Background
@@ -273,9 +260,9 @@ This keeps the number of migration files manageable.
 
 ## Best Practices Summary
 
-1. **Prefer fixtures** for shared, static test data
+1. **Prefer fixtures** for shared, static, read-only test data
 2. **Prefer dynamic data** for test-specific or unique data
-3. **Always clean up** dynamic data with defer
+3. **Always clean up** dynamic data with `defer`, through a test repository, by the record's own key
 4. **Document fixtures** with comments in SQL files
 5. **Consider partition pruning** when working with old fixtures
 6. **Use consistent IDs** in fixtures for easy reference

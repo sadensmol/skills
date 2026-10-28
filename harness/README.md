@@ -25,8 +25,12 @@ the capability is absent.
 | `load-skill` | Bring another skill's instructions into context once, then reuse them while they remain present |
 | `ask-user` | Put a short choice or question to the user and wait |
 | `track-todos` | Keep a visible, live task list |
+| `browser` | Act in the user's authenticated browser through the workspace server the project policy names: reuse its tabs, never another browser |
 | `run-background-shell` | Start a long-running command, keep working, collect it later |
 | `spawn-subagent` | Delegate one unit of work to a fresh context |
+| `cheap-subagent` | `spawn-subagent` on the harness's cheapest model that can still run commands and read their output |
+| `planner-subagent` | `spawn-subagent` on the harness's planning model, allowed to write the plan file |
+| `main-subagent` | `spawn-subagent` on the main session's model (the model of the task stage) at high effort |
 | `fan-out` | Run several subagents over independent inputs |
 | `background-subagent` | Delegate without blocking, and be told when it finishes |
 | `stop-subagent` | Abandon work already started |

@@ -1,10 +1,9 @@
 # Common Test Patterns
 
+Read this when you write a test method: naming, structure, error assertions,
+async waits, multi-record cleanup, database verification, or a bug reproduction.
+
 ## Test Naming Conventions
-
-### Test Method Names
-
-Use descriptive names that clearly indicate what is being tested:
 
 **Pattern 1: TestFeatureCondition**
 ```go
@@ -13,40 +12,31 @@ func (s *OrderTestSuite) TestDemoSuccess() {...}
 func (s *OrderTestSuite) TestSmallOrderAmountFail() {...}
 ```
 
-**Pattern 2: Test_WhenCondition_ExpectResult**
+**Pattern 2: Test_WhenCondition_ExpectResult** — more explicit for complex conditions
 ```go
 func (s *OrderTestSuite) Test_WhenSessionIDIsInvalid_Return500() {...}
 func (s *OrderTestSuite) Test_WhenSessionIDNotFound_Return404() {...}
-func (s *OrderTestSuite) Test_WhenUserBlacklisted_ReturnForbidden() {...}
 func (s *OrderTestSuite) Test_WhenIntegrationServerReturnsError_ProxifyIt() {...}
 ```
 
-Choose the pattern that best expresses the test's intent. Pattern 2 is more explicit for complex conditions.
-
 ## Test Structure (Arrange-Act-Assert)
 
-### Standard Pattern
+Arrange, act, assert — separated by blank lines, not by narrating comments (SKILL.md rule 15).
 
 ```go
 func (s *FeatureTestSuite) TestFeatureSuccess() {
-    // Arrange - Set up test data
     testAmount := int64(1000)
-    testCartID := uuid.New().String()
     expectedBalance := int64(9000)
-
-    // Arrange - Configure mocks
     s.mockSrv.MethodFunc = func(ctx context.Context, req *pkg.Request) (*pkg.Response, error) {
         s.Require().Equal(testAmount, req.Amount)
         return &pkg.Response{Balance: expectedBalance}, nil
     }
 
-    // Act - Call the API
     res, err := s.apiClient.Feature(s.Ctx, &api.Request{
         ID:     tests.TestID,
         Amount: testAmount,
     })
 
-    // Assert - Verify results
     s.Require().NoError(err)
     s.Require().NotNil(res)
     s.Require().Equal(expectedBalance, res.Balance)
@@ -55,178 +45,65 @@ func (s *FeatureTestSuite) TestFeatureSuccess() {
 
 ## Assertions
 
-### Basic Assertions
+**Error messages** — the service's domain error format, exact or partial:
 
 ```go
-// Error checking
-s.Require().NoError(err)
-s.Require().Error(err)
-
-// Equality
-s.Require().Equal(expected, actual)
-s.Require().NotEqual(unexpected, actual)
-
-// Nil checking
-s.Require().Nil(value)
-s.Require().NotNil(value)
-
-// Boolean
-s.Require().True(condition)
-s.Require().False(condition)
-
-// String matching
-s.Require().Contains(actualString, "substring")
-s.Require().NotContains(actualString, "substring")
-```
-
-### Error Message Assertions
-
-```go
-// Exact error message
 s.Require().EqualError(err, "rpc error: code = Unknown desc = [400]order amount is less than minimum order amount")
-
-// Partial error message (more flexible)
 s.Require().ErrorContains(err, "rpc error: code = Unknown desc = [404]session not found")
 s.Require().ErrorContains(err, "[403|account_blocked]user is blacklisted")
 ```
 
-### Custom Error Messages
-
-Add context to failed assertions:
+**Assertion messages** — explain why it should hold:
 
 ```go
 s.Require().Equal(l.CurAmount+1, l2.CurAmount, "CurAmount should be incremented by 1")
 s.Require().False(integrationCalled, "integration server should not be called in demo mode")
 ```
 
-## Async Testing Patterns
+Use `Require()` (fail fast), not `Assert()`, for anything later steps depend on.
 
-### Using Eventually Instead of time.Sleep
+## Async Testing
 
-**CRITICAL RULE:** NEVER use `time.Sleep` for async testing. Always use `require.Eventually` from testify.
+**Prefer `require.Eventually` over `time.Sleep`** — poll for the expected state
+instead of sleeping a fixed time. The ONLY exception is proving a background
+action did NOT happen; see SKILL.md → *Proving "it did NOT happen"*.
 
-**Why:**
-- `time.Sleep` makes tests flaky and slow
-- `Eventually` polls until condition is met or timeout occurs
-- More reliable and faster in most cases
-
-**Bad (DO NOT USE):**
-```go
-// ❌ DON'T DO THIS
-res, err := s.apiClient.CreateAsync(s.Ctx, req)
-s.Require().NoError(err)
-
-time.Sleep(10 * time.Millisecond)  // Flaky - might be too short or too long
-
-// Check result
-record, err := s.repository.FindByID(s.Ctx, res.ID)
-s.Require().NoError(err)
-s.Require().Equal("completed", record.Status)
-```
-
-**Good (USE THIS):**
-```go
-// ✅ DO THIS
-res, err := s.apiClient.CreateAsync(s.Ctx, req)
-s.Require().NoError(err)
-
-// Use Eventually to wait for async operation
-s.Require().Eventually(func() bool {
-    record, err := s.repository.FindByID(s.Ctx, res.ID)
-    if err != nil {
-        return false
-    }
-    return record.Status == "completed"
-}, tests.EventuallyWaitTime, tests.EventuallyPollInterval, "record should be marked as completed")
-```
-
-### Eventually Pattern with Project Constants
-
-The project defines standard constants for Eventually assertions:
+Always use the project's standard constants:
 
 ```go
-// From tests/test-suite.go
+// tests/test-suite.go
 const (
-    EventuallyWaitTime     = 15 * time.Second  // Maximum wait time
-    EventuallyPollInterval = 1 * time.Second   // Polling interval
+    EventuallyWaitTime     = 15 * time.Second
+    EventuallyPollInterval = 1 * time.Second
 )
-```
 
-**Always use these constants** for consistency across tests:
-
-```go
 s.Require().Eventually(func() bool {
-    // Condition check
-    return someConditionMet
-}, tests.EventuallyWaitTime, tests.EventuallyPollInterval, "expected condition description")
-```
-
-### Common Eventually Patterns
-
-**Waiting for Background Processing:**
-```go
-// After triggering async operation
-s.Require().Eventually(func() bool {
-    refund, err := s.refundRepository.FindByOrderID(s.Ctx, orderID)
+    refund, err := s.refundTestRepository.FindByOrderID(s.Ctx, orderID)
     if err != nil {
         return false
     }
-    return refund.Status == "processed"
+    return refund != nil && refund.Status == "processed"
 }, tests.EventuallyWaitTime, tests.EventuallyPollInterval, "expected refund to be created and processed")
 ```
 
-**Waiting for Record Creation:**
-```go
-s.Require().Eventually(func() bool {
-    records, err := s.repository.List(s.Ctx, filter)
-    if err != nil {
-        return false
-    }
-    return len(records) > 0
-}, tests.EventuallyWaitTime, tests.EventuallyPollInterval, "expected records to be created")
-```
+- Testing a Ristretto cache directly: prefer `cache.Wait()` over `Eventually`.
+- **Don't use `Eventually` for synchronous calls** — call the API once and assert:
 
-**Waiting for Status Change:**
-```go
-s.Require().Eventually(func() bool {
-    refund, err := s.refundRepository.FindByID(s.Ctx, refundID)
-    if err != nil {
-        return false
-    }
-    return refund != nil && refund.Status == "confirmed"
-}, tests.EventuallyWaitTime, tests.EventuallyPollInterval, "refund should still exist after retry processing")
-```
-
-**Waiting for Cache Population (Ristretto):**
-```go
-// If using Ristretto cache, prefer cache.Wait() over Eventually
-cache.Wait()  // Ristretto-specific synchronization
-
-// But if testing through API/service layer:
-s.Require().Eventually(func() bool {
-    result, err := s.service.GetCached(s.Ctx, key)
-    return err == nil && result != nil
-}, tests.EventuallyWaitTime, tests.EventuallyPollInterval, "cache should be populated")
-```
-
-### When NOT to Use Eventually
-
-**Don't use Eventually for synchronous operations:**
 ```go
 // ❌ WRONG - CreateUser is synchronous
 s.Require().Eventually(func() bool {
-    _, err := s.service.CreateUser(s.Ctx, data)
+    _, err := s.apiClient.CreateUser(s.Ctx, req)
     return err == nil
 }, tests.EventuallyWaitTime, tests.EventuallyPollInterval)
 
-// ✅ CORRECT - Just call it directly
-user, err := s.service.CreateUser(s.Ctx, data)
+// ✅ CORRECT
+res, err := s.apiClient.CreateUser(s.Ctx, req)
 s.Require().NoError(err)
 ```
 
 ## Test Data Management
 
-### Creating Test Data in SetupSuite
+Feature suites wire **test repositories only** in `SetupSuite`:
 
 ```go
 func (s *OrderTestSuite) SetupSuite() {
@@ -235,12 +112,11 @@ func (s *OrderTestSuite) SetupSuite() {
     db, err := db.Setup(s.Cfg.Postgres)
     s.Require().NoError(err)
 
-    s.sessionRepository = repository.NewSession(db)
     s.sessionTestRepository = repository_test.NewSession(db)
 }
 ```
 
-### Using Helper Methods
+Suite helpers create dynamic data; `defer` the cleanup right after creating it:
 
 ```go
 func (s *OrderTestSuite) TestWithCustomUser() {
@@ -248,7 +124,6 @@ func (s *OrderTestSuite) TestWithCustomUser() {
     sessionID := s.CreateNewSessionWithUserID(testUserID)
     defer s.DeleteSession(sessionID)
 
-    // Test using custom session
     res, err := s.prvAPIV1Client.Order(s.Ctx, &corev1.OrderRequest{
         SessionID: sessionID.String(),
         // ...
@@ -256,56 +131,16 @@ func (s *OrderTestSuite) TestWithCustomUser() {
 }
 ```
 
-### Cleanup with Defer and Test Repositories
+### Multiple records — clean up each one by its own key
 
-**CRITICAL RULES:**
-1. **Use test repositories** for cleanup (e.g., `repository_test.Feature`), not production repositories
-2. **Delete ONLY the specific record** created by this test - NEVER delete all records
-3. **Use defer immediately after creating data** - ensures cleanup even if test fails
-4. **Delete by specific ID/key** - the same identifier used when creating the record
-
-**Why test repositories?**
-- Test repositories have delete methods that production repos may not expose
-- Keeps test-only operations separate from production code
-- Prevents accidental use of dangerous delete operations in production
-
-**Pattern: Create data, then defer delete by ID**
-
-```go
-func (s *FeatureTestSuite) TestWithDynamicData() {
-    // Create unique test data
-    testID := uuid.New()
-    expectedTxID := fmt.Sprintf("test_%s", testID)
-
-    // Insert test record
-    record := &model.OutboxRecord{
-        ID:      testID,
-        ExtTxID: expectedTxID,
-        Status:  "pending",
-    }
-    err := s.outboxRepository.Insert(s.Ctx, record)
-    s.Require().NoError(err)
-
-    // IMMEDIATELY defer cleanup - delete ONLY this specific record
-    defer func() {
-        // Use test repository, delete by the specific ID we created
-        delErr := s.outboxTestRepository.DeleteByExtTxID(s.Ctx, expectedTxID)
-        s.Require().NoError(delErr)
-    }()
-
-    // Test logic here...
-    res, err := s.apiClient.ProcessRecord(s.Ctx, &api.Request{ID: testID})
-    s.Require().NoError(err)
-}
-```
-
-**Multiple records - clean up each one:**
+The cleanup rules are in SKILL.md → *Test Data*. With several records, each gets
+its own `defer`, deleting by the exact identifiers it was created with:
 
 ```go
 func (s *OrderTestSuite) Test_WhenUserBlacklisted_ReturnForbidden() {
     testUserID := uuid.NewString()
     sessionID := s.CreateNewSessionWithUserID(testUserID)
-    defer s.DeleteSession(sessionID)  // Cleanup #1: session
+    defer s.DeleteSession(sessionID)
 
     blacklistEntry := &model.UserBlacklist{
         CustomerID: uuid.MustParse(tests2.TestCustomerID),
@@ -315,9 +150,7 @@ func (s *OrderTestSuite) Test_WhenUserBlacklisted_ReturnForbidden() {
     }
     err := s.userBlacklistTestRepository.Insert(s.Ctx, blacklistEntry)
     s.Require().NoError(err)
-
     defer func() {
-        // Cleanup #2: blacklist entry - delete by specific identifiers
         delErr := s.userBlacklistTestRepository.DeleteByCustomerIDAndExternalIDAndUserID(
             s.Ctx,
             uuid.MustParse(tests2.TestCustomerID),
@@ -327,108 +160,44 @@ func (s *OrderTestSuite) Test_WhenUserBlacklisted_ReturnForbidden() {
         s.Require().NoError(delErr)
     }()
 
-    // Test logic here
+    // ...
 }
-```
-
-**NEVER do this:**
-
-```go
-// ❌ BAD - Deletes ALL pending records, not just the one this test created
-defer func() {
-    s.testRepository.DeleteAllPending(s.Ctx)
-}()
-
-// ❌ BAD - No cleanup at all
-// Test creates data but doesn't clean up
-
-// ❌ BAD - Using T().Cleanup() when defer is simpler and clearer
-s.T().Cleanup(func() {
-    s.testRepository.DeleteByID(s.Ctx, testID)
-})
-```
-
-**Always do this:**
-
-```go
-// ✅ GOOD - Delete ONLY the specific record by its unique identifier
-defer func() {
-    delErr := s.testRepository.DeleteByExtTxID(s.Ctx, expectedTxID)
-    s.Require().NoError(delErr)
-}()
 ```
 
 ## Database State Verification
 
-### Before/After Pattern
-
-Verify state changes in the database:
+Don't stop at the API response — verify persistence, before and after, through
+the **test** repository:
 
 ```go
 func (s *OrderTestSuite) TestRealSuccess() {
-    // Get state before
-    l, err := s.levelRepository.GetByCustomerIDAndExternalIDAndUserIDAndCurrencyAndProductAndDemo(
-        s.Ctx,
-        domain.NewMustCustomerIDFromString(tests2.TestCustomerID),
-        domain.NewExternalIDFromString(tests2.TestExternalID),
-        domain.UserID(tests2.TestUserID),
-        TestCurrency,
-        tests.TestProductID,
-        false,
-    )
+    l, err := s.levelTestRepository.GetByUserAndCurrency(s.Ctx, tests2.TestUserID, TestCurrency)
     s.Require().NoError(err)
     s.Require().NotNil(l)
 
-    // Perform action
     res, err := s.prvAPIV1Client.Order(s.Ctx, &corev1.OrderRequest{...})
     s.Require().NoError(err)
 
-    // Get state after
-    l2, err := s.levelRepository.GetByCustomerIDAndExternalIDAndUserIDAndCurrencyAndProductAndDemo(
-        s.Ctx,
-        domain.NewMustCustomerIDFromString(tests2.TestCustomerID),
-        domain.NewExternalIDFromString(tests2.TestExternalID),
-        domain.UserID(tests2.TestUserID),
-        TestCurrency,
-        tests.TestProductID,
-        false,
-    )
+    l2, err := s.levelTestRepository.GetByUserAndCurrency(s.Ctx, tests2.TestUserID, TestCurrency)
     s.Require().NoError(err)
-
-    // Verify changes
     s.Require().Equal(l.CurAmount+1, l2.CurAmount, "CurAmount should be incremented by 1")
 }
 ```
 
-## Testing Different Scenarios
+## Error Paths
 
-### Success Path
+Cover success and failure. A mock set to `nil` documents that the request must
+fail before reaching it.
 
-```go
-func (s *FeatureTestSuite) TestSuccess() {
-    // Configure successful mock response
-    s.mockSrv.MethodFunc = func(ctx context.Context, req *pkg.Request) (*pkg.Response, error) {
-        return &pkg.Response{Status: "success"}, nil
-    }
-
-    res, err := s.apiClient.Feature(s.Ctx, &api.Request{...})
-
-    s.Require().NoError(err)
-    s.Require().NotNil(res)
-}
-```
-
-### Error Paths
-
-**Validation Errors:**
+**Validation errors:**
 ```go
 func (s *OrderTestSuite) TestSmallOrderAmountFail() {
-    s.intSrv.OrderFunc = nil  // Won't reach mock
+    s.intSrv.OrderFunc = nil
 
     res, err := s.prvAPIV1Client.Order(s.Ctx, &corev1.OrderRequest{
-        SessionID:    tests.TestUnlimitedSessionID,
-        CartID: uuid.New().String(),
-        Amount:  int64(1),  // Too small
+        SessionID: tests.TestUnlimitedSessionID,
+        CartID:    uuid.New().String(),
+        Amount:    int64(1),
     })
 
     s.Require().EqualError(err, "rpc error: code = Unknown desc = [400]order amount is less than minimum order amount")
@@ -436,15 +205,15 @@ func (s *OrderTestSuite) TestSmallOrderAmountFail() {
 }
 ```
 
-**Not Found Errors:**
+**Not found:**
 ```go
 func (s *OrderTestSuite) Test_WhenSessionIDNotFound_Return404() {
     s.intSrv.OrderFunc = nil
 
     res, err := s.prvAPIV1Client.Order(s.Ctx, &corev1.OrderRequest{
-        SessionID:    "0c0066f9-a383-4a46-bd4b-8be5b04dc354", // Non-existent
-        CartID: uuid.New().String(),
-        Amount:  1000,
+        SessionID: "0c0066f9-a383-4a46-bd4b-8be5b04dc354",
+        CartID:    uuid.New().String(),
+        Amount:    1000,
     })
 
     s.Require().ErrorContains(err, "rpc error: code = Unknown desc = [404]session not found")
@@ -452,7 +221,7 @@ func (s *OrderTestSuite) Test_WhenSessionIDNotFound_Return404() {
 }
 ```
 
-**External Service Errors:**
+**External service errors are proxied:**
 ```go
 func (s *OrderTestSuite) Test_WhenIntegrationServerReturnsError_ProxifyIt() {
     s.intSrv.OrderFunc = func(ctx context.Context, req *integrationv1.OrderRequest) (*integrationv1.BalanceResponse, error) {
@@ -466,70 +235,39 @@ func (s *OrderTestSuite) Test_WhenIntegrationServerReturnsError_ProxifyIt() {
 }
 ```
 
-### Conditional Behavior
+**Modes** (e.g. demo vs real): test each mode separately and assert which
+dependency is (or is not) called.
+
+## Reproduce minimally; model the real invariant
+
+When writing a test that reproduces a bug (especially a red test before a fix), two failure modes waste everyone's time:
+
+**1. Over-engineering the scenario to fit your theory of the cause.** Reproduce the *reported* behavior with the fewest entities. If the report is "one operation fails and the account is stuck," the test is **one** record where **one** call fails — not two records where the first blocks the second. Reaching for extra entities (a second txn/actor/record) to force the failure is a smell that you're testing your mental model of the cause, not the reported bug. Build the simplest thing that triggers it; add an entity only when the simplest form genuinely can't reproduce it.
+
+**2. A fake that's more lenient than the real dependency — it hides the bug (false green).** A red test only means something if the fake enforces the same guard the real dependency does. When the behavior under test depends on a dependency's **lock / reservation / uniqueness / gate / constraint**, the per-test fake func MUST model that guard, or the test passes for the wrong reason and you "prove" a bug that's still there.
 
 ```go
-func (s *OrderTestSuite) TestDemoVsRealMode() {
-    // Test demo mode
-    res1, err1 := s.prvAPIV1Client.Order(s.Ctx, &corev1.OrderRequest{
-        SessionID: tests.TestDemoSessionID,  // Demo session
-        // ...
-    })
-    s.Require().NoError(err1)
+// Bad — fake always lets the reserve succeed, so the retry never hits the real
+// gate. The deadlock is invisible; the test is falsely green.
+s.ledgerSrv.WithdrawBonusBalanceStartFunc = func(ctx, req) (*Resp, error) {
+    return &Resp{...}, nil   // ❌ no reservation state, no "already in progress"
+}
 
-    // Test real mode
-    res2, err2 := s.prvAPIV1Client.Order(s.Ctx, &corev1.OrderRequest{
-        SessionID: tests.TestRealSessionID,  // Real session
-        // ...
-    })
-    s.Require().NoError(err2)
+// Good — model the real single-slot guard in the closure (minimal state).
+var reserved int64
+s.ledgerSrv.WithdrawBonusBalanceStartFunc = func(ctx, req) (*Resp, error) {
+    if reserved > 0 {                                   // the real gate
+        return nil, fmt.Errorf("already in progress: reserved %d", reserved)
+    }
+    reserved = req.Amount
+    return &Resp{...}, nil
+}
+s.ledgerSrv.WithdrawBonusBalanceFinishFunc = func(ctx, req) (*Resp, error) {
+    reserved = 0
+    return &Resp{...}, nil
 }
 ```
 
-## Constants and Test Data
+Keep the modeled state minimal — plain `int64`/`bool` vars, scoped to the one account/key the test owns (filter other keys with `"not found"`, like the sibling tests). No `sync.Mutex` by default: a background processor handles records sequentially in one goroutine, so the fake funcs never run concurrently, and sibling tests use plain flags. Add synchronization only if the TEST goroutine also reads the fake's state (e.g. polling it in `Eventually`) — and prefer asserting on DB state via the test repo instead, which removes that need.
 
-### Defining Test Constants
-
-```go
-const (
-    // API-level constants
-    TestExtSessionID = "test_ext_session_id"
-    TestQuantity     = 11
-
-    // User test data
-    TestCurrency      = "USD"
-    TestPlatform      = "desktop"
-    TestReturnURL     = "https://example.com/return"
-    TestUserPrefix    = "test_user_"
-    TestUserFirstName = "test_user"
-    TestUserLastName  = "test_user"
-    TestUserNickName  = "test_user_nickname"
-    TestUserCountry   = "Georgia"
-)
-```
-
-### Dynamic Test Data
-
-```go
-func (s *FeatureTestSuite) TestFeature() {
-    // Generate unique IDs for each test run
-    testCartID := uuid.New().String()
-    testUserID := uuid.NewString()
-
-    // Use in test
-}
-```
-
-## Best Practices
-
-1. **Always use Require for setup** - Tests should fail fast if setup fails
-2. **Use defer for cleanup** - Ensure resources are cleaned up even if test fails
-3. **Test one thing per test** - Keep tests focused on a single scenario
-4. **Use descriptive variable names** - testAmount, expectedBalance, not a, b, c
-5. **Add assertion messages** - Explain why an assertion should pass
-6. **Verify database changes** - Don't just check API response, verify persistence
-7. **Reset mocks between tests** - Prevent test interference
-8. **Use constants for test data** - Reuse common test values
-9. **Test both success and failure paths** - Don't just test happy path
-10. **Clean up test data** - Always delete created records with defer
-11. **NEVER use time.Sleep** - Always use `require.Eventually` for async operations
+**Assert the DESIRED outcome, not the current broken behavior.** The red test asserts what *should* happen (the operation recovers / completes), so it fails now and flips green once the fix lands. To make the flip automatic, arrange the transient failure to eventually succeed (e.g. fake fails the first call, succeeds after) — pre-fix the guard stays stuck so it never reaches the success; post-fix it recovers and completes.
