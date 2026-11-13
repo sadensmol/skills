@@ -5,6 +5,10 @@ operation · backfills · data fixes
 
 ## File rules
 
+- A migration of the current unreleased task has no old data: edit it in place. Seed a
+  table that the task added with plain literal rows: no `SELECT` from other tables and no
+  `ON CONFLICT`, unless the task explicitly needs rows derived from released data. The
+  rules below bind released migrations.
 - Never edit a migration or a fixture after it is applied anywhere. Add a new file with a
   new timestamp. The tool records applied files by name, so it never applies an edited
   file again.

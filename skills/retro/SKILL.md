@@ -36,11 +36,12 @@ Before delegation, create a sanitized review set:
 - Preserve user requests, agent responses, tool calls, errors, retries, and rework messages.
 - Remove tokens, passwords, cookies, private keys, authorization headers, and unrelated personal data.
   Key-name patterns are not enough: also mask bare opaque tokens (24+ characters mixing upper case,
-  lower case and digits, outside paths) and quoted shell assignments such as `T='…'`.
+  lower case and digits, outside paths), quoted shell assignments such as `T='…'`, and UUIDs
+  that follow a key word, also across a line break (`prod api key:\n<uuid>`).
 - Keep timestamps and turn boundaries so reviewers can cite evidence.
-- Pass the same bounded, sanitized review set from both runtimes to exactly ten reviewers.
+- Pass the same bounded, sanitized review set from both runtimes to exactly eleven reviewers.
 
-### 2. Fan out ten reviewers
+### 2. Fan out eleven reviewers
 
 Fan out exactly one reviewer for each role below. Ask each reviewer to return evidence, not edits.
 Each reviewer must identify the session and turn that supports every finding.
@@ -55,6 +56,12 @@ Each reviewer must identify the session and turn that supports every finding.
 8. **User experience**: detect evidence of frustration, urgency, confusion, or repeated explanation.
 9. **Safety and privacy**: detect secret exposure, destructive actions, or unsafe data handling.
 10. **Prevention**: independently propose the smallest evidence-backed skill, hook, config, or process fix.
+11. **Productivity**: detect skill steps, gates, reviewers and rules that cost much effort for
+    little output: work done twice (a doc updated after each code change instead of once at
+    the end), a gate or reviewer whose result nobody used, a check that duplicates another
+    one or an automation, waits and polling with no result, context loaded and never used.
+    For each, propose the change that gives the same or more output with less effort:
+    remove, merge, move later, run once, or automate. Cite the turns that show the cost.
 
 Treat a user request to redo, rework, correct, revert, or try again as a high-value signal.
 Treat strong frustration or urgency as a signal only when the transcript shows it explicitly.
@@ -70,10 +77,20 @@ For each incident, record:
 - The smallest prevention change.
 - The target owner: skill, hook, configuration, project guidance, or operator process.
 - Confidence: `clear`, `probable`, or `unclear`.
+- For a productivity incident: the effort spent (turns, tool calls, reruns, waits) and what the
+  change saves.
 
 Do not treat reviewer agreement as proof. A finding still needs direct evidence.
 
-### 4. Apply learning
+### 4. Project retro steps (hook)
+
+For each project with sessions in the window, resolve its plugin namespace `<project>` the
+same way `sadensmol-task` does (Step 2: agterm workspace, then the routes file). When a
+`<project>-retro` skill exists, load it and run its steps here. Its findings join the
+incidents of step 3, and its tables go into the report. A project with no `<project>-retro`
+skill adds no step.
+
+### 5. Apply learning
 
 For `clear` findings, update only the smallest relevant target and preserve unrelated user changes.
 Load `sadensmol-learn` when a lesson belongs to a shared `sadensmol-*` skill. Use the owning
@@ -88,10 +105,10 @@ For `unclear` findings, ask the user before editing. Include the evidence, the u
 and these options: `learn this`, `fix a different target`, or `skip this incident`.
 Wait for the user's decision, then apply only the selected action.
 
-### 5. Report
+### 6. Report
 
 **Mandatory completion gate:** Applying changes and running validation are
-intermediate steps, not the final deliverable. Do not stop after step 4. Before
+intermediate steps, not the final deliverable. Do not stop after step 5. Before
 the final response, verify that it contains the reviewed time window, separate
 Claude Code and OpenCode counts, and the complete table below. If no incidents
 remain, include a table row stating that no supported incidents were found.
@@ -103,6 +120,8 @@ runtime's local timezone for the date.
 
 | Problem | Why it happened | What changed | Improve next time or operator suggestion |
 |---|---|---|---|
+
+Below it, add every table that a project retro skill asks for in step 4.
 
 Link each changed file or configuration path. Mark unresolved incidents as `needs user decision`.
 Include the reviewed time window and separate Claude Code and OpenCode session counts above the table.

@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "linear": {
+      "type": "local",
+      "command": ["npx", "-y", "mcp-remote", "https://mcp.linear.app/mcp", "--auth-timeout", "600"],
+      "environment": {
+        "MCP_REMOTE_CONFIG_DIR": "{env:HOME}/.mcp-auth/sadensmol"
+      },
+      "enabled": true
+    }
+  }
+}

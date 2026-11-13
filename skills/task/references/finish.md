@@ -1,35 +1,44 @@
 # `finish` — shared skeleton (the project skill supplies the hooks)
 
-**Triggers:** "task finish", "finish task", "finish", "create PR(s)".
+**Triggers:** "task finish", "finish task", "finish", "create PR(s)", and the end of
+implementation: the writer starts `finish` itself when every step of `PLAN.md` or of the
+user request is done and its targeted tests are green (`SKILL.md` → *Autonomy*).
 
 Read the project skill's `references/finish.md` together with this file. This file
 holds the steps every project shares; each **[hook]** names what the project file
 supplies (repo set, commands, PR conventions, review bot, post-merge gates, tracker).
 Where the project file is more specific, it wins.
 
+## Start in a clean context (MUST FOLLOW)
+
+When `finish` starts (the user's command or the end of implementation) and your conversation did not start with the `Finish:`
+prompt, do nothing else first. Run `python3 <sadensmol-task-skill-dir>/scripts/pair.py
+fresh --base <worktree-base> --then finish` (`references/fresh.md`). Tell the user in one
+line that both sessions restart with a clean context for `finish`, then end the turn.
+The restarted writer starts with the `Finish:` prompt and runs `finish` from its start,
+without this step. The `Finish:` prompt skips only this one step of this one run: a later `finish` start runs `fresh` again. The `Finish:` prompt never approves a
+diff: the approval gate below still applies.
+
 ## Authorization and the approval gate
 
-- **Git authorization.** Invoking `task finish` is the user's explicit consent to run
-  `git add`, `git commit`, `git push` and to open PRs, even when a global or CLAUDE.md
+- **Git authorization.** The user's approval of the pre-PR diff gate (§4b) is the user's
+  explicit consent to run `git add`, `git commit`, `git push` and to open PRs, even when a global or CLAUDE.md
   rule says never to commit. It covers the `finish` flow only; outside it the global
   no-commit rule still applies. Do not re-ask for permission to commit or push.
 - **Never commit code the user has not seen and approved (MUST FOLLOW).** No `git
   commit`, `git push`, `gh pr create` or `gh pr merge` for any change until the user saw
-  **that exact diff** via `review` (or in chat) and approved it — submitted with no
+  **that exact diff** via `review` (or in `changes`) and approved it — submitted with no
   blocking annotations, or said so. Green build/lint/tests, an agentic PR review, or your
   own judgement never satisfy it. The rule is **continuous**: any code written later — a
   CI, lint or test fix, a review-finding fix, a behaviour-changing dependency re-pin, a
   rebase-conflict resolution, a deleted comment — is new unapproved code and goes back
   through `review` before it is committed or pushed. "Small / mechanical / obvious" is
-  not an exception. When in doubt, show the diff and wait.
-- **Ask about `review` first.** If the changes were not reviewed this session, the very
-  first thing `finish` does (before syncing or committing) is ask through `ask-user`:
-  **"Run review first (Recommended)"** — run `review`, address every annotation, then
-  continue — or **"Skip — already reviewed"**. Start no commit/push/PR step until this
-  gate is met.
-- **Only the user starts `finish`.** Code completion never starts `finish` or a code
-  review. Inside a user-started `finish`, the user approves the exact diff before the
-  local code-review gate runs.
+  not an exception. When in doubt, show the diff and wait. The earlier approved diff plus
+  an approved delta review cover the exact diff. A review that was only opened, closed
+  without feedback, or annotated is not approval.
+- **Open the gate without asking first.** Start preparation without a review-mode
+  question. Ask before a critical action. Prior exact-diff approval meets §4b only when
+  it also authorizes commit, push and PR creation.
 
 ## 1. Resolve the base, the branch, and the changed repos
 
@@ -76,7 +85,7 @@ tb_set <worktree-base> <repo-name> basePr <url>                    # when one ex
   --onto origin/<upstream> <forkPoint>`, resolve (new code — approval gate), then
   `tb_set … forkPoint "$(git rev-parse origin/<upstream>)"`.
 - **Re-anchor after the base merged:** `tb_reanchor <worktree-base> <repo-name> <repo>` —
-  forkPoint is the old base SHA `sadensmol-github` → "Merge a Stack" says to capture, so
+  forkPoint is the old base SHA `sadensmol-github` → `references/stacked-prs.md` → "Merge a Stack" says to capture, so
   only this task's commits are replayed. Then `git cherry -v origin/<default> HEAD` for
   duplicates, `--force-with-lease`, and verify the PR's `baseRefName` (`gh pr edit <pr>
   --base <default>` if GitHub did not retarget). The force-push is new content: let CI
@@ -103,13 +112,14 @@ done
 Remove any other stray skill artifact too (a scratch file, a generated report). `PLAN.md`
 sits at the base, outside every repo, so it is already excluded.
 
-## 4. The local green gate — the FULL suite, and never commit red (MUST FOLLOW)
+## 4. The local green gate — build, lint, changed suites; CI runs the full suite (MUST FOLLOW)
 
-`finish` is where the full suite runs (before it, SKILL.md → *Test scope* governs). For
-**every** changed repo/folder, before any commit, push or PR: all unit and integration
-tests plus every linter/formatter the repo uses must actually run green on this machine.
-"Looks fine", "CI will catch it" and "I only changed one side" are not passes.
-**[hook]** the exact commands per repo and language.
+For **every** changed repo/folder, before any commit, push or PR: the build, every
+linter/formatter the repo uses, and the suites of the changed packages (plus direct
+callers) must actually run green on this machine. The full suite runs in the PR's CI:
+that run is the full-suite gate, and merge waits for it to be green (§6). A repo whose CI
+does not run its full suite runs it here instead. "Looks fine" and "I only changed one
+side" are not passes. **[hook]** the exact commands per repo and language.
 
 - **All languages, all sides — the frontend counts.** Go: build + test (+ the repo's
   linter). JS/TS: unit tests, the typecheck (`tsc --noEmit`) and ESLint. Flutter:
@@ -121,20 +131,66 @@ tests plus every linter/formatter the repo uses must actually run green on this 
   runtime (CI's Node version, not yours), run codegen, start the service it needs. "No
   `node_modules`, so CI will validate it" is not acceptable.
 - **Never commit red or unrun.** Red, or could not run → stop and fix it or make it
-  runnable. Never commit and "watch CI".
+  runnable. Never commit and "watch CI" for a check this gate runs locally.
 - **Fan it out as session branches, launched together** — one per changed repo (and per
   language/side where the project says so), plus the code-review branch. Serialize only
   lanes that contend for the same local stack (`references/infra.md`). Wait for every
   branch before touching a file; the commit stays in the main session.
-- **Local code-review gate** (SKILL.md → *Review checkpoint*): runs only inside a
-  user-started `finish`, after the approval gate is met. Run `sadensmol-code-review`
-  in Local mode over every changed repo's diff, concurrently with the suites. It is local:
+- **Local code-review gate** (SKILL.md → *Pre-PR diff gate*): runs here, before §4b.
+  Run `sadensmol-code-review` in Local mode over every changed repo's diff, concurrently
+  with the suites, with `docs: 'skip'` (docs come once, in §6a); do not ask the mode. Fix every P0/P1 at once, with no finding gate:
+  the user sees the fixes and the report at §4b. It is local:
   no PR comments, no reliance on GitHub review state. Re-run after fixes until no P0/P1
   remains.
+- **Fixes stay in scope.** Apply fixes only within approved scope. Ask before any
+  critical fix. Continue independent work while that fix waits.
 - **Rework re-triggers the gate, scoped.** Any code written after the full run (a review
   fix, lint fix, CI-driven fix, re-pin, conflict resolution) is re-verified before it is
   committed: re-run the suites of what changed and of what depends on it — not a second
   full sweep — and take it back through `review`.
+
+## 4a. Task-scope gate — the diff does what the task asked (MUST FOLLOW)
+
+Before any commit, push or PR, prove the work matches the task. Read the task and post
+the comment through the project's tracker skill; the task is the one the branch maps to
+(no mapping → ask the user which task; never skip the gate).
+
+1. **Read the task in full** — title, description, acceptance criteria and every comment
+   (an earlier accepted deviation lives there).
+2. **Classify every change** in every in-scope repo's diff (stacked repos: against
+   `tb_diff_base`): **in scope** (a requirement asks for it), **additional** (nothing
+   asks for it) or **different** (it replaces or contradicts a requirement). Also list
+   each requirement the diff does **not** deliver. Doc updates are not missing here:
+   they come in §6a.
+3. **All in scope, nothing missing** → continue to §4b.
+4. **Any deviation** → a critical decision (`SKILL.md` → *Autonomy*). Ask it through
+   `ask-user` when §4b opens, in the same stop, one line per item: what the task asked,
+   what the diff does, why. This gate covers deviations already found in the diff. Never
+   make a new out-of-scope change before approval.
+   - **Accepted** → post ONE tracker comment before step 5: what was done against the
+     task or in addition to it, and why, one bullet per item. Commit only after the
+     comment is posted.
+   - **Rejected** → revert or rework that change. It is new code: targeted gate, then
+     `review`, then this gate again.
+5. **Code written after this gate** (a review, CI or lint fix) runs the gate again; a new
+   deviation needs its own accepted comment.
+
+## 4b. Pre-PR diff gate — the user approves the exact diff (MUST FOLLOW)
+
+This is the second user point of `SKILL.md` → *Autonomy*. Open `review`
+(`references/review.md`): the whole diff the first time, else the delta since the last
+opened review; also show earlier changes that still await approval. In the same
+message, tell the user in chat:
+
+- `Approve = I commit, push to GitHub and open the PR(s).`
+- the local code-review result: P0/P1 fixed, P2s fixed and left, disputed findings with
+  both positions;
+- the task-scope result: in scope, or the deviations (their `ask-user` is due now, §4a).
+
+Approved = the tool reports an explicit Approve, or the user says so in chat
+("approved", "lgtm", "go", "ship"). A closed page, `REVIEW_SESSION_CLOSED` or annotations
+are not approval: address the annotations (targeted gate, then this gate again).
+Approved → §5 at once; do not ask again.
 
 ## 5. Commit, push, open the PR — per changed repo
 
@@ -160,7 +216,7 @@ exception. The PR assignee is not a hook: it is always the operator (step 3).
    **reviewer** (`--reviewer X`) and the **tracker** assignee — never `--assignee X`,
    never `--remove-assignee` of the operator.
 4. **Register the GitHub stack** once the chain's PRs exist, per repo — the chain is
-   `basePr` → `pr` from `.task-base`: `sadensmol-github` → "REGISTER THE STACK WITH
+   `basePr` → `pr` from `.task-base`: `sadensmol-github` → `references/stacked-prs.md` → "REGISTER THE STACK WITH
    GITHUB" (append to an existing stack with `…/stacks/<n>/add`).
    A stacked PR is never merged before its base PR.
 
@@ -183,7 +239,7 @@ The loop, per PR:
 3. **Judge each finding on the code, not on who raised it** — read the code path it names
    and decide whether the failure can happen.
 4. **Fix what is real** through the full gate: targeted suite + linters green, then the
-   `review` checkpoint, then commit and push. Re-trigger the review if the bot does not
+   pre-PR diff gate (§4b) on the delta, then commit and push. Re-trigger the review if the bot does not
    re-run on push.
 5. **Read a failing check's real reason before touching anything.** A workflow job:
    `gh run view <run-id> --log-failed`. An external app's check (code scanner, quality
@@ -206,15 +262,45 @@ The loop, per PR:
 6. **Repeat** after each push until every finding is fixed or answered and every check
    is settled.
 
+## 6a. Docs — the last change before the merge (MUST FOLLOW)
+
+The user's rule (2026-11-12): "why not just update it at the end when all changes are
+done!" Docs are updated once, after the last code change, so they never chase a moving
+implementation. Do not touch docs during implementation or the earlier `finish` steps.
+
+1. **Start when the code is final:** every PR's findings are fixed or answered and every
+   check is green (§6). A code change after this step runs this step again.
+2. **Find the docs with one agent:** run the `documentation` reviewer agent once over the
+   final diff of every repo (one session branch). Give it the hints of `PLAN.md` →
+   `## Docs` and the project's doc map (**[hook]**). Its findings are the list.
+3. **Update every listed doc in one pass**, in plain words (`sadensmol-plan` → *Write
+   simply*). Do not re-run the agent on the docs diff.
+4. **The user approves the docs diff** through `review` (§4b; a markdown-only delta opens
+   `annotate`). Then commit and push (§5). A docs repo with no PR yet gets one now.
+5. **Wait for the checks again**, then merge (§7).
+
+**Guard: no merge and no `cleanup` before this step is done.** A PR merged first leaves
+its docs behind. Nothing to change → say `docs: none — <why>` in the report, and record
+`docs=none` in the cleanup checklist; otherwise `docs=updated`.
+
 ## 7. Post-PR gates and the tracker
 
-**[hook]** merges, deploy/e2e gates, and the tracker update.
+**[hook]** merges, deploy/e2e gates, and the tracker update. No merge before §6a is done.
+
+**Read the tracker issue back after the last merge (MUST FOLLOW).** A tracker's merge
+automation can change the issue's state or assignee after the tracker update. Re-read the
+issue, compare it with the project tracker flow, set it again where it differs, and read
+it back once more. Report the final state and assignee. When `finish` ends before the
+merge, `cleanup` does this check instead (its `tracker_state` guard).
 
 ## 8. Report
 
 PR links as **plain URLs** (clickable in a terminal), one per changed repo, with each
 PR's state; the repos skipped and why; the local code-review result (all P0/P1 fixed;
-P2s fixed and left); suites + linters green; the bot verdict (fixed with commit,
+P2s fixed and left); the task-scope gate (in scope, or the deviation comment's link);
+suites + linters green; the docs updated in §6a (files, or `none — <why>`); the bot verdict (fixed with commit,
 dismissed with reason); every check's state. Any red or running check is named, and the
 report says `finish` is not complete. **[hook]** extra lines. Never suggest `cleanup`
-unless the task is done (SKILL.md → *Never suggest cleanup while work remains*).
+unless the task is done (SKILL.md → *Never suggest cleanup while work remains*). End the
+report with one line: `Cleanup: safe`, `Cleanup: not yet — <what remains>`, or
+`Waiting on you: <action>`.

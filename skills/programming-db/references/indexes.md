@@ -1,7 +1,7 @@
 # Indexes and query plans
 
 Contents: design rules · composite key order · partial indexes · covering indexes ·
-range and expression keys · safe creation · checks after a change
+range and expression keys · safe creation · checks after a change · verifying a change
 
 ## Design rules
 
@@ -97,3 +97,12 @@ Example: `(owner_id, currency, created_at)` for
 - A plan test asserts that the plan names the index and has no `Seq Scan` (or no
   `SubPlan`). A plan test that cannot fail proves nothing. Watch it fail once without the
   index.
+
+## Verifying a change
+
+- Prove a performance change with `EXPLAIN (ANALYZE, BUFFERS)` on realistic data, run
+  after `ANALYZE`. Compare buffers, not only milliseconds.
+- A semantic test cannot see a plan regression. For a query that must use an index or must
+  prune partitions, add a test that runs `EXPLAIN` and asserts on the plan.
+- Read the slow-query plans that the server logs (`auto_explain`,
+  `log_min_duration_statement`) before you guess at a cause.

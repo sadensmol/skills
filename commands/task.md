@@ -11,5 +11,6 @@ Forward the argument string below to it **verbatim** as the subcommand and its a
 
 $ARGUMENTS
 
-If the argument string is empty, apply the skill with no arguments and let it use its own
-default. Do no task, worktree or git work before the skill is loaded.
+If the argument string is empty, run the skill's `help` (`references/help.md`): list the
+subcommands of the current project with their explanations. Do no task, worktree or git
+work before the skill is loaded.

@@ -35,6 +35,7 @@ the capability is absent.
 | `background-subagent` | Delegate without blocking, and be told when it finishes |
 | `stop-subagent` | Abandon work already started |
 | `isolate-work` | Give work its own checkout or session |
+| `session-transcript` | Find the full transcript of the current session, or say that only a labelled partial snapshot from context is possible |
 
 A skill never names a tool. It says "fan out one reviewer per area" or "run plannotator as
 a background subagent", and the harness file says what that means here.

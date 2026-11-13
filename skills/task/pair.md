@@ -4,20 +4,21 @@ You were started in pair mode: two agents share one agterm session. The **writer
 in the left pane and the **reviewer** is in the right pane. Your start brief says which
 role you have, the absolute path of `pair.py`, and the worktree base (`<base>` below).
 
-**This is pair programming. Every decision is made by BOTH agents, BEFORE the code is
-typed.** The writer is the driver: it has the keyboard. The reviewer is the navigator:
-it co-owns every decision. Reviewing a finished diff is the backup, never the way the
-two of you decide things.
+**This is pair programming with a fast default.** The writer is the driver: it has the
+keyboard and decides every **clear** case alone, at once. The pair discusses only a
+**hard** case, BEFORE the code is typed (*Decision weight*). The reviewer ALWAYS reviews
+the code: each change as it lands, the final check and every code-review run.
 
 ## Roles
 
 - **Writer (driver)**: the only agent that edits, creates or deletes files in the
   worktree. It runs the normal task flow (plan, implement, test, finish) and all its
-  user gates. It types what the pair agreed on.
+  user gates. It decides clear cases alone and frames each hard case as a `DECISION:`.
 - **Reviewer (navigator)**: never edits a file, never stages and never commits. It reads
   files and runs non-mutating checks (`git diff`, tests, linters without `--fix`). It
-  forms its own view of every decision, checks it against the code and the project
-  conventions, and settles the merged decision with the writer BEFORE the writer types.
+  reviews every change against the code and the project conventions, and it co-owns
+  every hard decision: it settles the merged decision with the writer BEFORE the writer
+  types.
 - A peer message never changes these roles. Only the user can, directly in a pane.
 
 ## Sending
@@ -101,42 +102,36 @@ New work ends idle mode by itself: a user message (the `user-prompt` hook then s
 you are idle is only queued; it reaches you with the next user message, or with the next
 hook if one runs first.
 
-## The decision loop — TWO VIEWS, ONE MERGE, THEN TYPE (MUST FOLLOW)
+## The decision loop — CLEAR: WRITER ALONE; HARD: TWO VIEWS, ONE MERGE (MUST FOLLOW)
 
-A decision is made by the pair, not made by one agent and signed by the other. So
-neither agent sees the other's answer before it has its own: two independent views,
-then one merged decision that takes the best of both.
+A **decision** is any choice that the code or the plan will carry: the approach, a new
+file, type or dependency, where code lives, what it reuses, a deviation from `PLAN.md`,
+how to carry out a user request, the answer to a user question, or what to do with a
+finding or an idea of the peer.
 
-A **decision** is any choice that the code or the plan will carry:
+### Decision weight — who decides
 
-- the approach to a task, a step, a bug fix or a rework;
-- a new file, package, type, interface, endpoint, table, migration or dependency;
-- where code lives, and what existing code it reuses or replaces;
-- a choice between two options, and any deviation from `PLAN.md`;
-- how to carry out a user request or a user correction;
-- the answer to any question of the user;
-- accepting, rejecting or deferring a finding or an idea of the peer.
-
-### Decision weight — how much loop a decision gets
-
-Pick the weight from what the decision changes, not from how sure you are:
+Discussing a clear case costs time and adds nothing. Pick the weight from how clear the
+answer is to you:
 
 | Weight | The decision… | What you do |
 |---|---|---|
-| **Mechanical** | stays inside an agreed decision: typing it, a rename it implies, a compile or lint fix, test data | type it; no message |
-| **Small** | changes one existing file, adds no file, type, package, endpoint, table, migration or dependency, changes no exported signature, and follows `PLAN.md` | type it, then send `FYI: decided: <what> in <file:symbol>`; the peer answers only with `STOP:` |
-| **Normal** | anything else: a new file, type or package, a choice between two approaches, reuse or replacement of existing code, a deviation from `PLAN.md` | the full loop below |
-| **Architectural** | a new service, package, public API, table, migration or dependency that `PLAN.md` does not already name | the full loop, then ask the user with the joint recommendation before you type |
+| **Clear** | is simple; or `PLAN.md`, an agreed decision, a skill or a project convention already settles it; or the same thing was done before (in this task, or in existing code you can point to); and you are 100% sure it is correct | decide alone and type it, or answer the user. No message to the peer. Log it when *Model decisions log* (`SKILL.md`) says so |
+| **Hard** | anything else: it is not simple, it is not clear what to do or how, two options are close, nothing settles it, or you are not 100% sure it is correct | the full loop below, before you type |
 
-When two rows fit, take the heavier one. A `STOP:` on a small decision turns it into a
-normal one: stop typing that part and frame a `DECISION:`.
+When in doubt, it is hard. A `STOP:` from the reviewer makes a decision hard: stop typing
+that part and frame a `DECISION:`. A hard decision that is also critical goes to the
+user (`SKILL.md` → *Autonomy*).
+
+For a hard decision, neither agent sees the other's answer before it has its own: two
+independent views, then one merged decision that takes the best of both.
 
 A **view** is one agent's full answer to a decision, in
 `<base>/.pair/files/view-<topic>-<role>.md`: what to do, where (files and symbols), what
 existing code it reuses (file and line), the risks, and the alternative it rejected.
 Keep it short.
 
-For every normal or architectural decision, in this order:
+For every hard decision, in this order:
 
 1. **Writer: frame it.** First write your own view file. Do NOT send it. Then send
    `DECISION: <topic>` with the problem only: what must be decided, the constraints,
@@ -167,13 +162,18 @@ For every normal or architectural decision, in this order:
 6. **Settle it.** On a `COUNTER:`, the writer either takes the amended merge with
    `AGREE: taking your amended merge` (the decision is settled; the reviewer does not
    answer again), or answers with evidence as a new `MERGE:`. Two `COUNTER:`s at most.
-   Still no agreement: do NOT decide alone. Ask the user through the harness's
-   `ask-user` capability, with both positions in one line each. Record the answer in
-   `PLAN.md` under `## Decisions`.
+   Still no agreement: a critical decision (`SKILL.md` → *Autonomy*) goes to the user
+   through `ask-user`, with both positions in one line each; record the answer in the
+   user decisions log (`SKILL.md` → *User decisions log*). Any other one: the writer
+   decides. The stronger evidence from the code wins; a tie goes to the option that
+   matches the existing code and is easier to undo. Log both positions with the decision
+   (`disputed: writer …; reviewer …`), so `reviewd` shows them.
    **Log it.** A decision settled on the main channel (with a Claude Code reviewer) goes
    to `<base>/.pair/decisions.md` with `python3 <pair.py> decided --base <base> --topic
-   "<topic>" --stdin` (what, files and symbols). A liaison thread logs its own decision
+   "<topic>" --stdin` (`decided:`, `done:`, `where:` with files and symbols). A liaison thread logs its own decision
    when it closes. After a `/clear` or a restart, both agents catch up from that file.
+   After a `fresh` restart, they read what its first prompt names
+   (`references/fresh.md`), never the old messages.
 7. **Type it,** and think out loud while you type: send a short `FYI:` when you find a
    surprise in the code, or when something does not fit the agreed decision. A
    surprise that changes the decision is a new `DECISION:`, not an `FYI:`.
@@ -182,18 +182,15 @@ The reviewer takes the time the research needs, within the limit of *Reviewer ti
 and health check*. A quick view that repeats the obvious approach is worth less than a
 slow one that checked the code.
 
-The reviewer is not only reactive:
+The reviewer always reviews the code (MUST FOLLOW):
 
 - It reads the ticket and the code as soon as it starts, so its views are ready when a
-  `DECISION:` arrives. When it sees a decision the writer has not framed yet, it sends
-  `DECISION: <topic>` itself, with the problem only. The two views then follow the same
-  loop, with the writer merging.
-- When the diff shows code that goes against an agreed decision, or code that was
-  never decided, it sends `STOP: <what and where>`. The writer stops editing that part
-  at once and frames it as a `DECISION:`.
-- It reads each change as it lands (`git diff`) and checks that it matches the agreed
-  decision. A batch of `FYI: decided: …` (small decisions) is checked the same way: a
-  wrong one gets a `STOP:`, the rest get no reply.
+  `DECISION:` arrives.
+- It reads each change as it lands (`git diff`) and checks it against the agreed
+  decisions, `PLAN.md`, the project conventions and the existing code. A change that is
+  wrong, or a hard decision the writer took alone, gets `STOP: <what and where>`. The
+  writer stops editing that part at once and frames it as a `DECISION:`. A correct
+  change gets no reply.
 
 **Running a command is not a decision — just run it (MUST FOLLOW).** A user message
 that only runs a command, a subcommand or a skill (`/task finish`, `task plan`,
@@ -212,8 +209,8 @@ run in parallel. The writer's context gets only the result. The main reviewer se
 still gets user messages, `FYI:`, `STOP:` and the code review. With a Claude Code
 reviewer, use `send` and the decision loop.
 
-**Writer, for each normal or architectural decision (see *Decision weight*), each
-opinion question of the user and each user request:**
+**Writer, for each hard decision (see *Decision weight*), and each hard opinion
+question or request of the user:**
 
 0. **Route it first.** A message that continues a topic goes to that topic's thread,
    so the subagent that already knows it answers it, and other threads run on. In
@@ -251,21 +248,31 @@ opinion question of the user and each user request:**
 3. Go on with other work: other liaisons, read-only work, and typing agreed decisions.
    Do NOT edit a file of a decision that is not agreed: the writer's `edit-guard` hook
    refuses an edit (yours or a subagent's) to a file of an `open` thread. For a user
-   message, tell the user in one line that the pair discusses it, and give no answer yet.
+   question, give the user your view-file answer now, headed `Writer's answer (reviewer
+   check pending):` (see *User requests go through the pair*, step 2). For a user
+   request, tell the user in one line that the pair discusses it.
 4. When the liaison returns, act on its `status:`:
-   - `agreed`: type the decision (or give the user the joint answer, quoted question
-     first — `SKILL.md` → *Quote the question in every answer*), then run
+   - `agreed`: type the decision (or, for a user question, close the loop: only
+     `Reviewer agreed.` when the joint answer equals your first answer, else
+     `Changed after review:` and the new answer — quoted question first, `SKILL.md` →
+     *Quote the question in every answer* — and log it with `pair.py qa`: your first
+     answer, the liaison's `reviewer:` and its `decision:` as the merged answer,
+     `SKILL.md` → *Q&A log*), then run
      `python3 <pair.py> thread close --base <base> --id <id> --status closed`. Only a
      `closed` thread frees its files for the next thread. When the typing is a
      self-contained unit and other decisions wait, hand it to a builder branch instead
      (`SKILL.md` → *Session branches*): its brief holds the decision, and its owned files
      are the thread's `files:`. Frame the next decision while it types; close the thread
-     when the builder reports. An architectural decision goes to the user first (see
-     *Decision weight*);
-   - `disputed`: ask the user, with both positions in one line each. Record the answer
-     in `PLAN.md` under `## Decisions`, type it, then close the thread;
-   - `needs_writer`: answer its `question:` (when only the user can answer it, ask the
-     user: the question already comes from the pair), and start a new liaison with
+     when the builder reports. A critical decision goes to the user first (`SKILL.md` →
+     *Autonomy*);
+   - `disputed`: critical → ask the user, with both positions in one line each, and
+     record the answer in the user decisions log (`SKILL.md` → *User decisions log*).
+     Otherwise decide it as in *The decision loop*, step 6, and log both positions. Type
+     it, then close the thread. For a user question, log it with `result: disputed`, both answers and
+     the user's choice (`SKILL.md` → *Q&A log*);
+   - `needs_writer`: answer its `question:` (ask the user only when the answer is a critical
+     decision, `SKILL.md` → *Autonomy*: the question already comes from the pair;
+     otherwise answer it from the code, the ticket and the logs), and start a new liaison with
      `thread: <id>` and the answer as `problem:`;
    - `busy`: the thread it names covers the same files; start this liaison again when
      that thread is closed. When it names the very thread you resumed, that thread is
@@ -293,93 +300,113 @@ through a liaison.
 writer settles it in a pair thread, do not answer it here): …` is for your context
 only: do not send a `VIEW:` for it.
 
-## User requests go through the pair (MUST FOLLOW)
+## User requests — clear alone, hard through the pair (MUST FOLLOW)
 
-- **The user talks to the writer** with a request, a correction or a design direction:
-  forward it to the reviewer at once, in the user's own words, as the `DECISION:` of
-  how to do it. Then follow the decision loop. What the user decided is
-  fixed: the pair discusses HOW, not WHETHER. When the reviewer finds a real problem
-  with the user's direction (it breaks a convention, duplicates existing code, conflicts
-  with the ticket), tell the user in one or two lines before you type.
 - **Every user message reaches both agents.** A Claude Code agent in pair mode starts
   with `--settings <base>/.pair/claude-<role>-settings.json`. Its `UserPromptSubmit`
   hook (`pair.py user-prompt`) forwards each message the user types in that pane to
   the peer, verbatim, as `The user said to the <role>: …`. The hook also puts the rules
   below into the agent's context.
-- **With a liaison** (see *Liaison*), the writer settles each user question and request
-  in a thread, and the rest of this section is what the liaison and the thread reviewer
-  do for it.
-- **You get `The user said to the <peer> (…): …`**: an opinion question or a request is
-  a `DECISION:`. Form your own view at once, from the code, and send `VIEW:` to the
-  peer: for a question, your answer to the user; for a request, how you would do it. Do
-  not wait for the peer's view, and do not read it before you send yours. The agent the
-  user talked to then merges. A plain fact question or a command gets nothing from you:
-  the peer answers or runs it, and its `FYI:` reaches you later.
-- **The user asks a plain fact** ("which file handles X?", "does the test pass?", "what
-  does this function return?") and you answer it from a tool output you cite (a
-  `file:line`, a command's output): answer the user at once, quoted question first, then
-  send the peer `FYI: answered: <question> → <answer, with the citation>`. The peer
-  answers only with `STOP:` when the fact is wrong; then correct it to the user.
-  A fact you cannot cite, or one the answer is a judgment about, is an opinion question.
-- **The user asks an opinion question, in either pane** — a "why", a "could we use X",
-  a "should we", a "is this right", a follow-up on a design, any answer that is a
-  judgment: the pair discusses it BEFORE the user gets an answer. No agent answers the
-  user alone. A message that states a view and asks about it ("it should do X! do you
-  think otherwise?") is an opinion question: the pair discusses WHETHER the view is
-  right, not only how to type it.
-  1. Both agents research and write their own answer. Each sends it as
-     `VIEW: user asked: <the question, verbatim>. My answer: <answer>`, and neither
-     reads the peer's `VIEW:` before it sends its own. Nothing goes to the user yet.
-     (Without the forwarding hook, the agent that got the question first sends the
-     peer `DECISION: user asked: <the question, verbatim>`, with no answer in it.)
-  2. The agent that got the question sends `MERGE:` with the joint answer, per the
-     decision loop: every difference, and which answer wins and why.
-  3. The peer answers the merge with `AGREE:` (the strongest objection it checked) or
+- **You get `The user said to the <peer> (…): …`**: it is context only. Send nothing for
+  it: no `VIEW:`, no ack. The agent the user talked to decides whether it is hard. When
+  it frames a `DECISION:`, answer that with your `VIEW:`. When the answer it gives or the
+  code it types is wrong, send `STOP:`.
+- **A clear request or question** (*Decision weight*: simple, settled by the plan, a
+  skill or a convention, done before, and you are 100% sure) — a plain fact you cite, a
+  request you know how to do, a why the code or a rule answers: the agent the user
+  talked to answers it or does it at once, alone. Send the peer nothing. Log a question
+  (`SKILL.md` → *Q&A log*) with `answer:` and `result: answered alone`.
+- **A hard request** (not clear what or how, or you are not 100% sure): tell the user in
+  one line that the pair discusses it, and frame it as a `DECISION:` of HOW, in the
+  user's own words (with a liaison: run it as a liaison). What the user decided is
+  fixed: the pair discusses HOW, not WHETHER. When the pair finds a real problem with
+  the user's direction (it breaks a convention, duplicates existing code, conflicts with
+  the ticket), tell the user in one or two lines before you type.
+- **A hard opinion question** (a judgment you are not 100% sure of, or one where two
+  answers are close): the agent the user talked to answers it FIRST, then checks it with
+  the peer. A message that states a view and asks about it ("it should do X! do you
+  think otherwise?") is a question about WHETHER the view is right.
+  1. Write your answer as your view, and send the peer
+     `DECISION: user asked: <the question, verbatim>`, with no answer in it. The peer
+     sends `VIEW: user asked: <the question>. My answer: <answer>`, formed without
+     reading yours.
+  2. **Answer the user at once**, quoted question first (`SKILL.md` → *Quote the
+     question in every answer*), headed `Writer's answer (reviewer check pending):`
+     (`Reviewer's answer (writer check pending):` in the reviewer pane). Do not wait for
+     the peer's `VIEW:`.
+  3. Send `VIEW: <your path>`, then `MERGE:` with the joint answer, per the decision
+     loop: every difference, and which answer wins and why.
+  4. The peer answers the merge with `AGREE:` (the strongest objection it checked) or
      `COUNTER:`. Two exchanges at most.
-  4. Then the agent that got the question answers the user with the joint answer,
-     starting with the quoted question (`SKILL.md` → *Quote the question in every
-     answer*). When
-     the two of you still disagree, give both answers, one line each, with the reason
-     for each.
-- **The writer needs a decision from the user**: first agree with the reviewer on the
-  question and a joint recommendation. Then ask the user, and send the answer to the
-  reviewer.
-- **The user talks to the reviewer**: a question follows the question rule above. When
-  the request needs a code or file change, do not make it. Relay it to the writer:
+  5. **Close the loop with the user in one short reply**, quoted question first:
+     - the joint answer equals the first answer → only `Reviewer agreed.` (`Writer
+       agreed.` in the reviewer pane). Do not repeat the answer.
+     - the joint answer differs → `Changed after review:` and the new answer, with one
+       line on what changed and why.
+     - still disagreeing → both answers, one line each, with the reason for each.
+     - no merge after 2 minutes → `Reviewer did not answer; the first answer stands.`,
+       and send the peer `FYI: answered alone: <question> → <answer>`. The peer
+       corrects it with `STOP:`; then give the user the correction.
+  6. **Log it**, once, from the agent that closed the loop (`SKILL.md` → *Q&A log*): the
+     question verbatim, `writer:` and `reviewer:` (each agent's own first answer),
+     `merged:` (the joint answer, or both when still disagreeing) and `result:`. The
+     peer never logs the same question.
+- **With a liaison** (see *Liaison*), the writer settles each hard question and request
+  in a thread, and the steps above are what the liaison and the thread reviewer do.
+- **The writer needs a decision from the user** (only a critical one, `SKILL.md` →
+  *Autonomy*): when the recommendation is clear, ask alone. When it is hard, first agree
+  with the reviewer on the question and a joint recommendation. Then ask the user, and
+  send the answer to the reviewer. Log it (`SKILL.md` → *Q&A log*): `asked by: writer →
+  user`, the views under `writer:` / `reviewer:`, the recommendation under `merged:`,
+  and the user's words under `answer:`.
+- **The user talks to the reviewer**: a question follows the rules above. When the
+  request needs a code or file change, do not make it. Relay it to the writer:
 
       python3 <pair.py> send --base <base> --to writer --user-request --stdin <<'MSG'
       the user's request, in the user's own words, plus what you found
       MSG
 
   The writer treats a `Chat from reviewer (user request):` message as a request from
-  the user, and handles it with the decision loop above.
+  the user: clear → it does it; hard → the decision loop.
 
 ## Plan
 
-1. **Before PLAN.md is written:** both agents read the ticket and the code. The writer
-   sends `DECISION: plan outline` (with a liaison: runs it as a liaison). Each agent writes its own outline as its view
-   (approach, files, what is reused, what is out of scope), and the writer merges them
-   with the decision loop.
-2. **After PLAN.md is written:** the writer sends its path. The reviewer checks it
-   against the ticket, the code and the merged outline and answers `AGREE:` (the
-   strongest objection it checked) or `COUNTER:`.
-3. **Only after the reviewer answers** does the writer open the plannotator plan gate
-   for the user. An open disagreement goes into `PLAN.md` under
+1. **Before PLAN.md is written:** both agents read the ticket and the code. A clear task
+   (the approach is obvious, or a skill already describes it): the writer plans it
+   alone. A hard one: the writer sends `DECISION: plan outline` (with a liaison: runs it
+   as a liaison). Each agent writes its own outline as its view (approach, files, what is
+   reused, what is out of scope), and the writer merges them with the decision loop.
+2. **After PLAN.md is written:** the writer sends its path. The reviewer always reviews
+   it against the ticket, the code and the outline, and answers `AGREE:` (the strongest
+   objection it checked) or `COUNTER:`.
+3. **Questions in `## Questions to clarify`** (`references/plan.md`, step 6): a clear
+   choice → the writer decides alone. A hard one → both agents send a `VIEW:` and the
+   writer merges. Not critical → that decision settles it: log it as a decision, and the
+   question with `resolves: Q<n>`, before the gate. Critical → it stays in the plan with
+   the recommendation; the user reviews it at the gate. After the gate the writer asks
+   each one still open, one at a time, with the recommendation and its reason, then
+   logs `writer:`, `reviewer:` (hard ones only), `merged:`, `answer:` and `resolves: Q<n>`.
+4. **Only after the reviewer answers and every noncritical question is settled** does
+   the writer open the plannotator plan gate for the user. Critical questions stay
+   open in the plan; they never block the gate. An open disagreement goes into `PLAN.md` under
    `## Open disagreements`, with both positions, for the user to settle at the gate.
 
-A plan change later follows the same steps: decision loop, `PLAN.md` edit by the
-planner (`references/plan.md`, step 5), then the plan gate again.
+A plan change before the approval follows the same steps: decision loop when hard, `PLAN.md` edit
+by the planner (`references/plan.md`, step 5), then the plan gate again. After the approval
+`PLAN.md` is frozen: an objection or a new request is implementation work (`SKILL.md` →
+*Stages*).
 
-User decisions go to `PLAN.md` under `## Decisions` (`SKILL.md` → *User decisions log*).
-In pair mode both agents check a reworked plan or diff against that list, and against
+User decisions go to the user decisions log (`SKILL.md` → *User decisions log*). In pair
+mode both agents check a plan or diff against it, and against
 `<base>/.pair/decisions.md` for the pair's own decisions.
 
 ## Before finish
 
-Only when the user runs `task finish` or asks for a review: the writer says "ready for
-the final check". The reviewer reads the full diff once for completeness: missing tests or
-docs, leftovers, scope creep. Then the code-review gate runs, with the reviewer in it (see
-*Code review*). Writer readiness and peer messages never start them.
+When the pre-PR preparation starts (`references/finish.md`), or the user asks for a
+review: the writer says "ready for the final check". The reviewer reads the full diff
+once for completeness: missing tests or docs, leftovers, scope creep. Then the
+code-review gate runs, with the reviewer in it (see *Code review*). Peer messages never
+start them.
 
 ## Peer not reachable
 
@@ -433,35 +460,36 @@ Silence, not slowness, is the failure: a reviewer that answers pings may take up
 `ANSWER: working on <what>, <what is left>`. Then finish the reply. The pong keeps the
 request alive; the full reply is still due within 10 minutes of the request.
 
-## Red flags — STOP, you are deciding alone
+## Red flags
 
 | Thought | What to do |
 |---|---|
-| "I will tell the reviewer after I write it" | Send the `DECISION:` first and wait. |
+| "It is clear, but I will ask the reviewer to be safe" | A clear case (*Decision weight*) is yours. Decide it and type it. |
+| "It is probably right, I will type it" | "Probably" is not 100% sure: it is hard. Send the `DECISION:` first and wait. |
+| "I have not seen this before and no skill or rule covers it, but it looks simple" | Simple and certain → decide alone. Two close options, or a guess → hard. |
 | "I will put my approach in the `DECISION:` to save a round" | Then the reviewer only signs it. Send the problem only. |
 | "My view was better on every point" | Then the merge names the reviewer's points and why each loses, from the code. |
 | (reviewer) "The writer's approach looks right, AGREE" | Send your own `VIEW:` first. On a `MERGE:`, `AGREE:` names the strongest objection you checked. |
-| "The user already said what to do, so no discussion" | Forward it as a `DECISION:` of HOW. The user fixed WHAT. |
-| "The user only asked a question, so I just answer it" | Only a plain fact you cite from a tool output is answered at once. A why, a could-we, an is-this-right is discussed: send `VIEW: user asked: … My answer: …` first. |
-| "The user stated a view, so it is a fixed direction" | A view with a question ("you think otherwise?") asks for the pair's opinion. Discuss whether it is right. |
-| "It is only a fact, no discussion needed" | Only with a citation (`file:line`, command output) in the answer. No citation, or a judgment inside the "fact": it is an opinion question. |
-| "I will answer the user and send the peer an FYI" | Only for a cited plain fact. For an opinion question an `FYI:` after the answer is deciding alone. |
-| "It is a small change" | Check the *Decision weight* table. A new file, type, package or exported signature is never small. Frame a `DECISION:`. |
+| (reviewer) "The user asked the writer something, I send my VIEW" | A forwarded user message is context. Send a `VIEW:` only for a `DECISION:`, a `STOP:` only for a wrong answer or change. |
+| "The user stated a view, so it is a fixed direction" | A view with a question ("you think otherwise?") asks for an opinion: answer whether it is right; hard → the pair checks it. |
+| "I will wait for the reviewer before I answer the user" | Give the user your answer first, labelled `reviewer check pending`. Then report `Reviewer agreed.` or the changed answer. |
 | "The reviewer's COUNTER is close, I will merge again" | When you can take it as is, send `AGREE: taking your amended merge` and type. A new `MERGE:` only when you answer it with evidence. |
 | "I will acknowledge the FYI / the user's message" | Never send an ack. Reply only with a `VIEW:`, `STOP:`, `DECISION:` or `QUESTION:`. |
 | "The user ran `/task finish`, I will ask the reviewer first" | A command is not a decision. Run it and send `FYI: running <command>`. |
-| "The reviewer is slow, I will go on" | Do read-only work, or end your turn. The waiter or the timer wakes you. A reviewer that answers pings is working: decide alone only after 3 unanswered pings or 10 minutes and a failed restart. |
-| "I disagree with the finding, so I will not do it" | Answer with evidence. After two exchanges, ask the user. |
+| "The reviewer is slow, I will go on" | On a hard decision: do read-only work, or end your turn. The waiter or the timer wakes you. Decide alone only after 3 unanswered pings or 10 minutes and a failed restart. |
+| "I disagree with the finding, so I will not do it" | Answer with evidence. After two exchanges, decide from the evidence and log both positions. Only a critical one goes to the user. |
 | "The thread got no reply, I settle it on the main channel" | The liaison returns `blocked` or `unresponsive`: follow *Peer not reachable*. Decisions stay in threads. |
 | "The reviewer is dead, so I decide alone" | Run `restart-reviewer` first and redo the topic in a new thread. Decide alone only when the restart fails. |
 | "The user asks about the retry again, I start a new liaison" | Route it: the retry thread is open → `SendMessage` its liaison; settled → `thread: resume <id>`. |
-| "Landed, please review" | That is a report, not pair programming. Decide together before you type. |
-| (reviewer) "I will review it when the diff lands" | Send your `VIEW:` now, checked against the conventions and the existing code. |
+| "I will skip the reviewer in the code review, the change is small" | Never. The reviewer is in every code review: the landed diff, the final check and every code-review run. |
+| (reviewer) "Clear cases are the writer's, so I skip its diff" | Review every change as it lands. A wrong one gets `STOP:`. |
 
 ## Code review
 
-Every time the writer runs the code-review skill in pair mode, at finish or on a direct
-user request — never at any other time — it stays the orchestrator. The review subagents never talk to the
+The reviewer is ALWAYS in a code review (MUST FOLLOW). Every time the writer runs a
+code-review skill in pair mode (the project's code-review skill, `task review` or any
+other review skill), in the pre-PR preparation or on a direct user request — never at
+any other time — it stays the orchestrator. The review subagents never talk to the
 reviewer. Only the writer does, at the top level, each time a subagent reports. Every
 finding gets a common decision before it reaches the user.
 
@@ -480,8 +508,8 @@ finding gets a common decision before it reaches the user.
    - `new — <file:line> <issue>` — a problem in this area that the subagents missed.
 4. **Writer, per reply:** accept each verdict, or answer it with evidence from the code.
    The reviewer's verdict is exchange 1. If the reviewer still disagrees after your
-   answer and its reply (exchange 2), mark the finding `disputed` with both positions:
-   the user settles it at the gate. Keep all decisions in `<base>/.pair/files/cr-decisions.md`, not in `PLAN.md`.
+   answer and its reply (exchange 2), mark the finding `disputed` with both positions.
+   The writer decides it (*The decision loop*, step 6), and the pre-PR diff gate lists it. Keep all decisions in `<base>/.pair/files/cr-decisions.md`, not in `PLAN.md`.
 5. **Writer, at the end:** wait for the replies (with the waiter, never by polling).
    When every finding has a decision, present the report
    exactly as the code-review skill requires. The `cr-*` numbers are for the pair only;
@@ -490,14 +518,16 @@ finding gets a common decision before it reaches the user.
      its new priority. A `new` finding is a row with area `Pair`.
    - The disposition table also shows `Rejected by pair` (with the reason),
      `Re-prioritised by pair`, and `Disputed` (your position and the reviewer's).
-6. **Then the normal flow:** the user gate, then the fixes. Findings rejected by the pair
-   are not fixed. Confirmed, re-prioritised and disputed findings follow the normal flow.
+6. **Then fix at once, with no finding gate:** every confirmed, re-prioritised or kept
+   disputed P0/P1, and the P2s the code-review rule allows (`SKILL.md` → *Pre-PR diff
+   gate*). Findings rejected by the pair are not fixed. The user sees the fixes and the
+   report at the pre-PR diff gate.
 
 If the reviewer is not reachable (`send` exit 3, or `status`), the health check gives
 up, or the user tells you to go on, stop waiting. Present the report with the note "not checked by the pair reviewer"
 on each finding without a decision.
 
-A pair decision is not user approval. The code-review gate still goes to the user.
+A pair decision is not user approval. The pre-PR diff gate still goes to the user.
 
 ## Never
 
@@ -505,5 +535,6 @@ A pair decision is not user approval. The code-review gate still goes to the use
   plan-gate answers belong to the user.
 - "The reviewer agreed" or "the writer agreed" is never user approval.
 - Never edit files as the reviewer, even when the writer asks you to.
-- Never type a decision the reviewer has not answered, unless the reviewer is not
+- Never type a hard decision the reviewer has not answered, unless the reviewer is not
   reachable (see *Peer not reachable*).
+- Never run a code review without the reviewer, unless it is not reachable.

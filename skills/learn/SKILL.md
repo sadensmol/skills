@@ -9,7 +9,7 @@ Integrate new knowledge into existing skills **within the `sadensmol` namespace 
 
 ## Scope (HARD boundary)
 
-This skill **only** edits skills owned by the `sadensmol` plugin (i.e. `sadensmol-*` skills, whose source lives in the sadensmol plugin's `skills/` directory).
+This skill **only** edits skills owned by the `sadensmol` plugin (i.e. `sadensmol-*` skills, whose source lives in the sadensmol skills repository's `skills/` directory).
 
 **Never** use this skill to modify:
 - Other projects'/plugins' skills (any non-`sadensmol-` namespaced skill) — those have their own repos/owners.
@@ -20,8 +20,11 @@ If the knowledge belongs outside the sadensmol namespace, **stop** and tell the 
 
 ## General vs project-specific (decide BEFORE editing)
 
-The general sadensmol skills (`go-programming`, `typescript-programming`,
-`dart-programming`, `github`, `linear`, …) hold ONLY knowledge that is reusable
+Load `sadensmol-sadensmol` first (MUST FOLLOW). It owns the layer rules, hooks and the
+where-does-it-go table; this section is its short form.
+
+The general sadensmol skills (`programming`, `programming-go`, `programming-typescript`,
+`programming-dart`, `github`, `linear`, …) hold ONLY knowledge that is reusable
 across every project. **Project/product-specific knowledge must NOT be inlined
 into a general skill.**
 
@@ -40,7 +43,7 @@ Route by which parts are general vs specific:
   **point to the project-specific skill** for the concrete mechanics — never
   embed the project's commands/env/entities in the general skill. Example: a
   generic "to debug a test against a deployed env, run it locally" principle goes
-  in `go-programming`/`go-integration-tests` ONLY as "follow the project's own
+  in `programming-go` ONLY as "follow the project's own
   skill for how to run it"; the actual `AWS_PROFILE=…`, env names, and CI steps
   live in the project skill.
 
@@ -60,7 +63,8 @@ Determine which **sadensmol** skill the knowledge belongs in:
 3. **Ask if unclear** - "Should I add this to the `sadensmol-[skill-name]` skill, or does it belong elsewhere (outside this skill's scope)?"
 
 4. **Consider which sadensmol skill**:
-   - Language/domain → the matching sadensmol skill (`go-programming`, `typescript-programming`, etc.)
+   - Language-agnostic coding principle (naming, comments, code shape, domain modelling, layers, errors, test principles) → `programming`
+   - Language/domain → the matching sadensmol skill (`programming-go`, `programming-typescript`, etc.)
    - Tool/integration → the matching sadensmol skill (`github`, `linear`, `slack`, etc.)
    - New domain that fits sadensmol → may need a new sadensmol skill (use skill-creator)
 
@@ -74,18 +78,24 @@ Before editing, always read the target file to:
 
 **For skills with references/**: Check if the knowledge fits better in a reference file than SKILL.md. Long skills should keep SKILL.md lean.
 
-### 3. Propose + get approval (MUST FOLLOW — before ANY edit)
+### 3. Apply what the user asked; propose what you found (MUST FOLLOW — before ANY edit)
 
-For **every** change to a skill, first clearly state:
+**The user asked for the change → apply it.** When the user's own message asks for a
+skill change ("update the skill", "remember this", a corrected rule), that message is the
+approval. Edit at once, then report what changed in 1–3 lines per file. Ask first only
+when the edit goes beyond what the user asked, or reverses an explicit user decision that
+the message does not reverse.
+
+**You found the learning yourself → propose it first.** For every such change, state:
 - **Which skill/file** will be edited.
 - **What the change is about** — the learning being captured, in 1–3 lines.
 - **Where it goes** (section) and roughly what the added text says.
 
-Then ask for approval via `AskUserQuestion` — options: **apply** / **skip**.
+Then ask the user for approval — options: **apply** / **skip**.
 Edit only after an explicit "apply". Multiple changes → per-item approval.
 A skipped item is dropped without comment. Never edit skills silently.
 
-### 3a. Integrate (after approval)
+### 3a. Integrate
 
 Edit the target file:
 - Match existing style (heading levels, formatting, code style)
@@ -99,14 +109,13 @@ Edit the target file:
 python3 "$(ls -d ~/.agents/skills/skill-creator ~/.claude/skills/skill-creator 2>/dev/null | head -1)"/scripts/package_skill.py <path/to/skill-folder>
 ```
 
-Summarize changes and ask: "Does this capture what you wanted?"
+Summarize the changes in 1–3 lines per file. Do not ask whether they capture what the user wanted.
 
 ## Handling Contradictions
 
-If new knowledge contradicts existing content:
-1. Point out the conflict
-2. Ask: "The skill says X, but you're saying Y. Replace X with Y?"
-3. Update accordingly
+The user's explicit correction replaces the old rule: replace it, and name the replaced
+rule in the summary. A contradiction you found yourself: point it out and ask "The skill
+says X, but you're saying Y. Replace X with Y?", then update accordingly.
 
 ## Creating New Skills
 

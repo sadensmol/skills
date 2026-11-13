@@ -48,8 +48,8 @@ Verify: `tmux -V`
 
 | Action | Command |
 |---|---|
-| Split horizontal | `C-b "` |
-| Split vertical | `C-b %` |
+| Split top/bottom | `C-b "` |
+| Split left/right | `C-b %` |
 | Navigate panes | `C-b arrow-key` |
 | Cycle panes | `C-b o` |
 | Zoom/unzoom pane | `C-b z` |
@@ -107,8 +107,8 @@ tmux new-session -d -s NAME -n WINDOW_NAME
 tmux send-keys -t "SESSION:WINDOW.PANE" "command" Enter
 
 # Splits
-tmux split-window -h -t TARGET   # vertical split
-tmux split-window -v -t TARGET   # horizontal split
+tmux split-window -h -t TARGET   # left/right split
+tmux split-window -v -t TARGET   # top/bottom split
 
 # Layout presets
 tmux select-layout -t TARGET even-horizontal

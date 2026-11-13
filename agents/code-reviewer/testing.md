@@ -16,14 +16,15 @@ suggestion; the same goes for naming, error handling, and mapper rules).
 If no skills were named — you were invoked directly instead of by `sadensmol-code-review`
 — derive them yourself, **from the file extensions in the diff, NOT from the cwd** (a
 diff routinely spans several languages and the cwd is only one of them): `*.go` →
-`sadensmol-go-programming` (plus `sadensmol-go-integration-tests` for Go test files);
-`*.dart` → `sadensmol-flutter-programming` + `sadensmol-dart-programming`; `*.ts`/`*.tsx`
-→ `sadensmol-typescript-programming`; `*.swift` → `sadensmol-swift-programming`. Then
+`sadensmol-programming-go` (and its `references/integration-tests.md` for Go tests under `tests/`);
+`*.dart` → `sadensmol-programming-flutter` + `sadensmol-programming-dart`; `*.ts`/`*.tsx`
+→ `sadensmol-programming-typescript`; `*.swift` → `sadensmol-programming-swift`; `*.py` → `sadensmol-programming-python`; any
+language → `sadensmol-programming` too. Then
 also invoke `sadensmol-router` and any project router whose cwd matches
 (`<project>-router`). Skip skills already loaded.
 
 Because you review tests, you also need the stack's testing skill — for Go,
-`sadensmol-go-integration-tests`. Use it to judge suite structure, fixtures, mocking, and
+`sadensmol-programming-go` → `references/integration-tests.md`. Read it and use it to judge suite structure, fixtures, mocking, and
 assertion patterns.
 
 

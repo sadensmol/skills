@@ -30,7 +30,7 @@ as a name, a description and a short path against a root table (`r1` =
 follow it** — here that is what invoking a skill means, and it is not optional when a skill
 names another one.
 
-Skill ids are flat and namespace-prefixed (`sadensmol-go-programming`); Codex takes them
+Skill ids are flat and namespace-prefixed (`sadensmol-programming-go`); Codex takes them
 from the frontmatter `name`, not from the directory. There is no colon form. The user can
 also pick one with `/skills` or by typing `$` and the name.
 
@@ -104,6 +104,11 @@ a loop and do not duplicate its work meanwhile.
 No worktree tool. Create one with plain git in the shell and keep every path under it for
 the rest of the session. Note that the sandbox limits writes to the workspace roots, so a
 worktree outside them needs the user's approval first.
+
+## session-transcript
+
+Full transcript export is not implemented by this capability. Use a labelled partial
+snapshot from your context, and say that it is not the transcript.
 
 ## Also here
 

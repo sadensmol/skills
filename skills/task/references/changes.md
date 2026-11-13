@@ -3,18 +3,18 @@
 **Triggers:** "task changes", "show changes", "show me the changes", "show the diffs",
 "changes".
 
-Walk the user through **this task's business-logic diffs, in chat**, a screenful at a
-time, so each fix can be approved, questioned or reworked on the spot. No plannotator,
+Walk the user through **this task's business-logic diffs, on one HTML page companion**
+(`SKILL.md` → *Show the user anything in a page companion*), a screenful at a time, so each fix can be approved, questioned or reworked on the spot. No plannotator,
 no annotation round-trip — the exact patch, a static test-reference count, and a pause.
 
 **Scope — this task's own changes only (MUST FOLLOW).** The branch's own commits plus
 the uncommitted tree, inside the current worktree. Never diff a primary checkout, never
 show the default branch's history, and never rebuild a diff from memory or `PLAN.md`.
-Every hunk you print is verbatim output of a `git` command run in this session.
+Every hunk you show is verbatim output of a `git` command run in this session.
 
 ## Step 1 — each repo's base ref
 
-Derive `$base` (SKILL.md → *Worktree helpers*). `.task-base` is the per-repo base
+Derive `$base` (`references/worktree-helpers.md`). `.task-base` is the per-repo base
 record the project's `new` writes (`references/new.md` → *`.task-base`*); `tb_diff_base`
 gives the commit each repo's own changes start from — the forkPoint in a stacked repo,
 else the merge-base with its default branch:
@@ -64,9 +64,11 @@ PLAN.md`), then never mention it again.
 - Order: repo by repo, files in `git` order.
 - One-line header per batch: `Batch 2/5 — api: internal/wallet/service.go, internal/wallet/mapper.go`.
 
-Each file: `#### <repo>/<path>` (plus `(new file)` / `(deleted)`), then the exact diff
-in a `diff` fence, verbatim from `git` (never re-typed, summarised or trimmed beyond the
-hunk split), then the `Tests: N` line.
+Write each batch to `$base/.scratch/task-changes.html`. Open the page once, save its id,
+and `session overlay reload --target <saved id>` for each later batch. Each file: a
+`<repo>/<path>` heading (plus `(new file)` / `(deleted)`), then the exact diff in a `<pre>`,
+HTML-escaped and verbatim from `git` (never re-typed, summarised or trimmed beyond the hunk
+split), then the `Tests: N` line.
 
 **No commentary unless asked.** Do not explain, review, praise, or propose. Show and wait.
 
@@ -94,15 +96,15 @@ never give a percentage, and never run a test for it — `changes` runs no tests
 After each batch, ask through `ask-user`: one `Discuss <file>` option per file in the
 batch, plus `Next batch` (`Done` on the last batch) — 4 options at most.
 
-- **Next / Done** → approved; show the next batch, or the closing summary.
+- **Next / Done** → approved; put the next batch on the page, or give the closing summary.
 - **Discuss `<file>`** → **the walkthrough stops here (MUST FOLLOW).** Switch to plain
   discussion of that one change: answer short and factual, traced to the diff and the
-  code around it, and apply the fix the user asks for. Do not print the next batch, do
-  not re-print remaining diffs, and do not ask "shall we continue?".
+  code around it, and apply the fix the user asks for. Do not show the next batch, do
+  not show remaining diffs again, and do not ask "shall we continue?".
   - Reworks are allowed only here, only on the file the user named, exactly as asked.
     Never fix anything "while you are in there".
-  - After a rework, re-print that file's diff and its refreshed `Tests:` line. Still no
-    next batch.
+  - After a rework, put that file's diff and its refreshed `Tests:` line on the page. Still
+    no next batch.
   - Resume only on an explicit "continue" / "next" / `task changes`: re-derive the
     diffs and resume at the batch after the interrupted one; say which batch.
 

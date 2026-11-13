@@ -9,6 +9,16 @@ Turn billing facts into a PDF. This skill is the **generic layer**: it owns the 
 shape, the arithmetic, the renderer and the output rules. It holds **no** real party,
 bank or rate data — that comes from the resolved data source below.
 
+## Read on demand
+
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
+
+| When | Read |
+|---|---|
+| You write the payload JSON | `references/payload.md` |
+| You need a render flag beyond `--open --reveal`, or no PDF renderer is found | `references/render.md` |
+
 ## 1. Resolve the data source FIRST (MUST FOLLOW)
 
 Never start assembling an invoice before you know whose data it is built from.
@@ -27,8 +37,8 @@ workspace named after its project, and that stays right even when the cwd has wa
 into a skills checkout or a worktree. The cwd is the fallback: normalise it
 (`pwd | sed 's|/work_|/|g'`) and match it against the local routes file
 (`~/.agents/sadensmol-router-routes.json`, or `~/.claude/sadensmol-router-routes.json`)
-whose entries are `{ "cwd": "<substring>", "skill": "<plugin>:<skill>" }`. The plugin
-namespace before the `:` is `<project>`.
+whose entries are `{ "cwd": "<substring>", "skill": "<project>-<name>" }`. The skill-id
+prefix before the first `-` is `<project>`.
 
 Then, in order:
 
@@ -84,40 +94,9 @@ currency, and at least one line item with an amount. Everything else is optional
 ## 4. The payload
 
 Write the payload as JSON, then render it. Only `issuer.name`, `client.name`,
-`invoice.number`, `invoice.issue_date` and `items` are required.
-
-```json
-{
-  "doc_title": "Invoice",
-  "currency": {"code": "EUR", "symbol": "€"},
-  "invoice": {"number": "…", "issue_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD",
-              "period": "…", "reference": "…", "subtitle": "…"},
-  "issuer": {"label": "From", "name": "…", "address": ["…"], "email": "…",
-             "tax_id": "…", "tax_id_label": "…", "reg_no": "…", "reg_no_label": "…"},
-  "client": {"label": "Bill to", "name": "…", "address": ["…"], "tax_id": "…"},
-  "items": [{"description": "…", "note": "…", "quantity": 1, "unit": "h", "unit_price": 0}],
-  "discount": {"percent": 0},
-  "tax": {"rate_percent": 0, "label": "…"},
-  "payment": {"terms": "…", "bank": {"<label>": "<value>"}, "instructions": "…"},
-  "notes": "…",
-  "footer": "…",
-  "logo_path": "…"
-}
-```
-
-Notes on the shape:
-
-- An item is either `quantity` × `unit_price`, or a flat `{"description", "amount"}`.
-- `payment.bank` is a free-form ordered map — whatever labels the data source uses
-  (`IBAN`, `SWIFT`, `Intermediary bank`, …) render as given, in order. This is how a
-  project supplies correspondent/intermediary banks without a schema change. JSON cannot
-  repeat a key, so a second row with the same label is written `Intermediary bank #2`;
-  the renderer strips a trailing `#N` so both print identically.
-- `tax` and `discount` are omitted entirely when they do not apply. A zero-rate line
-  (reverse charge, out of scope) still needs an explicit `{"rate_percent": 0, "label": …,
-  "amount": 0}` when the label must appear.
-- Money: the script computes subtotal/discount/tax/total with `Decimal`, half-up to 2
-  places. Do not pre-compute totals in the payload.
+`invoice.number`, `invoice.issue_date` and `items` are required. Do not pre-compute
+totals in the payload. Read `references/payload.md` for the full schema and the notes on
+items, bank rows, tax and discount before you write the payload.
 
 ## 5. Render
 
@@ -125,23 +104,12 @@ Notes on the shape:
 scripts/make_invoice.py <payload.json> --out <output.pdf>
 ```
 
-It prints the PDF path, the computed total and the renderer used.
-
-| Flag | Effect |
-|---|---|
-| `--open` | open the finished PDF in the default viewer/browser |
-| `--reveal` | show it in the file manager (Finder/Explorer), selected |
-| `--force` | overwrite an invoice that already exists at `--out` |
-| `--html-only` | write the HTML for a layout check and stop |
-| `--keep-html` | keep the intermediate HTML alongside the PDF |
+The flag table (`--force`, `--html-only`, `--keep-html`) and the renderer fallback
+order are in `references/render.md` — read it when you need another flag or no renderer
+is found.
 
 **Always pass `--open --reveal`.** The document is looked at, and its folder is put in
 front of the user so they can attach or file it without hunting for the path.
-
-Rendering uses headless Chrome, then WeasyPrint, then `wkhtmltopdf` — whichever is
-present. None available → it says so and names the options; install one rather than
-falling back to a text file. Point `$CHROME` at the browser binary when it lives
-somewhere unusual.
 
 **Where it goes:** the path the data source specifies; absent that, ask. Never write a
 finished invoice into a scratch/temp directory and call it delivered.

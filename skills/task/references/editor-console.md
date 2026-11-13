@@ -4,7 +4,7 @@
 "task console" / "open console" / "open a console" / "new console".
 
 All three start from the worktree base (`$root`, `$branch`, `$base`) and the
-`real_changes` filter in SKILL.md → *Worktree helpers*. On `NOT_IN_WORKTREE`, say the
+`real_changes` filter in `references/worktree-helpers.md`. On `NOT_IN_WORKTREE`, say the
 subcommand must run from inside a worktree, and stop.
 
 ## Pick the repo (shared by all three)
@@ -43,20 +43,11 @@ echo "count=$count changed=$nchanged target=${target:-none}"; echo "REPOS:$repon
   (`git -C "$cwd" rev-parse --show-toplevel` is `$base` or under it), skip the picker and
   use that repo.
 
-## `code` (one-time VS Code trust)
+## `code`
 
-VS Code trusts every subfolder of a trusted folder, so trusting `$root` once makes every
-worktree open trusted (worktrees are siblings of the main repo, so trusting the repo is
-not enough). A marker records it; `rm "$root/.vscode-parent-trusted"` re-prompts.
-
-```bash
-MARKER="$root/.vscode-parent-trusted"             # outside every repo — never committed
-if [ ! -f "$MARKER" ]; then echo "NEEDS_TRUST"; code "$root"; else echo "TRUSTED"; fi
-```
-
-- `NEEDS_TRUST` → ask the user (`ask-user`) to click **"Yes, I trust the authors"** and
-  confirm. Only after they confirm, `touch "$MARKER"`, then open the worktree.
-- `TRUSTED` → open it straight away.
+Open only the path that *Pick the repo* resolves. Never open `$root` or an ancestor to
+set up trust. Leave any trust prompt to VS Code for the selected folder. Do not create or
+check a parent-trust marker.
 
 ```bash
 if [ -n "$target" ]; then code "$target"          # the changed repo, or the user's pick
@@ -77,13 +68,13 @@ else env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT zed "$base"/*/; fi
 
 ## `console`
 
-Opens a **new agterm session** at the resolved repo (`proj`; the base when the user
+Opens a **new companion session** of the task session at the resolved repo (`proj`; the base when the user
 picked `open the base`), named `$(basename "$proj")`. Each call opens a fresh session —
 no select-existing logic.
 
 ```bash
 if [ -n "${AGTERM_ENABLED:-}" ] && command -v agtermctl >/dev/null 2>&1; then
-  agtermctl session new --cwd "$proj" --name "$name" --after "$AGTERM_SESSION_ID" --no-select
+  bash <sadensmol-task-skill-dir>/scripts/child-session.sh "$name" --cwd "$proj" --no-select
 else
   echo "NOT_IN_AGTERM"
 fi
@@ -91,8 +82,7 @@ fi
 
 `NOT_IN_AGTERM` → say `console` needs agterm, and stop.
 
-**`--after "$AGTERM_SESSION_ID"` is required (MUST FOLLOW).** The anchor carries its own
-workspace, so the console lands directly below the task session. Never pass
-`--workspace`/`--workspace-name` instead, and never omit the anchor — a console at the
-end of another workspace is lost. **`--no-select` is required too:** the console opens in
-the background, and the user's focus never moves to it.
+**`child-session.sh` is required (MUST FOLLOW).** The console lands indented under the task
+session and closes with it. Never call `agtermctl session new` for it directly.
+**`--no-select` is required too:** the console opens in the background, and the user's focus
+never moves to it.

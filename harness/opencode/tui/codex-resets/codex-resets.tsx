@@ -1,11 +1,13 @@
-import { createSignal } from "solid-js"
+import { createEffect, createSignal } from "solid-js"
 import { readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 
 // Codex limit reset info from codex-resets.com and the weekly Codex usage of the
-// OpenCode ChatGPT login, shown next to the prompt.
+// OpenCode ChatGPT login, shown next to the prompt. The session prompt also shows
+// the context use on the model line and drops the row below it (directory,
+// context, ctrl+p hint), which stays only while the session runs.
 const API = "https://codex-resets.com/api/resets"
 const USAGE_API = "https://chatgpt.com/backend-api/wham/usage"
 const AUTH_FILE = join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local/share"), "opencode/auth.json")
@@ -59,6 +61,20 @@ function line(data: Resets | undefined, now: number): { text: string; tone: "war
   if (Number.isNaN(last)) return { text: "", tone: "muted" }
   if (now - last < FRESH_MS) return { text: `✓ reset ${human(now - last)} ago`, tone: "ok" }
   return { text: `reset ${human(now - last)} ago`, tone: "muted" }
+}
+
+// same figures as OpenCode's own prompt: tokens of the last answer against the model limit
+function contextLine(api: Parameters<TuiPlugin>[0], sessionID: string): string {
+  const last = api.state.session
+    .messages(sessionID)
+    .findLast((m: any) => m.role === "assistant" && m.tokens.output > 0) as any
+  if (!last) return ""
+  const t = last.tokens
+  const tokens = t.input + t.output + t.reasoning + t.cache.read + t.cache.write
+  if (tokens <= 0) return ""
+  const size = tokens >= 1e6 ? `${(tokens / 1e6).toFixed(1)}M` : tokens >= 1e3 ? `${(tokens / 1e3).toFixed(1)}K` : `${tokens}`
+  const limit = api.state.provider.find((p) => p.id === last.providerID)?.models[last.modelID]?.limit.context
+  return limit ? `${size} (${Math.round((tokens / limit) * 100)}%)` : size
 }
 
 export const tui: TuiPlugin = async (api) => {
@@ -117,10 +133,54 @@ export const tui: TuiPlugin = async (api) => {
     )
   }
 
+  // OpenCode's Prompt with the context beside the model. Its last row has no option
+  // to hide it, so it is hidden on the rendered tree: Prompt's root box holds the
+  // input, a border line and that row.
+  const prompt = (
+    ctx: { theme: { current: Record<string, unknown> } },
+    props: { session_id: string; visible?: boolean; disabled?: boolean; on_submit?: () => void; ref?: any },
+  ) => {
+    let wrap: any
+    const tidy = () => {
+      const row = wrap?.getChildren()[0]?.getChildren()[2]
+      if (!row) return
+      row.visible = (api.state.session.status(props.session_id)?.type ?? "idle") !== "idle"
+      // the right side: editor file, context, ctrl+p hint
+      for (const item of row.getChildren().slice(1)) item.visible = false
+    }
+    createEffect(() => {
+      api.state.session.status(props.session_id)
+      setTimeout(tidy, 0)
+    })
+    return (
+      <box
+        ref={(r: unknown) => {
+          wrap = r
+          setTimeout(tidy, 0)
+        }}
+      >
+        <api.ui.Prompt
+          sessionID={props.session_id}
+          visible={props.visible}
+          disabled={props.disabled}
+          onSubmit={props.on_submit}
+          ref={props.ref}
+          right={
+            <box flexDirection="row" gap={2}>
+              <text fg={ctx.theme.current.textMuted as never}>{contextLine(api, props.session_id)}</text>
+              <api.ui.Slot name="session_prompt_right" session_id={props.session_id} />
+            </box>
+          }
+        />
+      </box>
+    )
+  }
+
   api.slots.register({
     slots: {
       home_prompt_right: view,
       session_prompt_right: view,
+      session_prompt: prompt,
     },
   })
 }

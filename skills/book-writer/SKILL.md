@@ -16,7 +16,7 @@ Read [references/history.md](references/history.md) first. Use past preferences 
 
 ### Step 1: Gather Requirements
 
-Before writing anything, ask the user (use AskUserQuestion) for ALL of the following. If some info is already provided or known from history, offer it as the default option.
+Before writing anything, ask the user for ALL of the following. If some info is already provided or known from history, offer it as the default option.
 
 1. **Description**: What the story is about (may already be provided)
 2. **Target audience age**: Toddlers (2-4), Kids (5-8), Middle grade (9-12), Young adult (13-17), Adults (18+)
@@ -84,7 +84,7 @@ Save the story as a `.md` file in the current working directory.
 
 ### Step 6: Update History
 
-After every story creation, update [references/history.md](references/history.md) using the Edit tool:
+After every story creation, update [references/history.md](references/history.md):
 
 1. **Add to "Past Creations"**: title, date, audience, language, style inspiration, filename, 1-2 sentence summary
 2. **Add to "Preferred Authors & Styles"**: if the user chose a new author/book, record it with style notes (only add if not already listed)
@@ -98,11 +98,16 @@ After writing, ask: "Would you like me to continue this story, adjust the tone, 
 
 ## Continuing a Previous Story
 
-When the user wants to continue a previous story:
+When the user wants to continue a previous story, read [references/continuing.md](references/continuing.md) and follow it.
 
-1. Read the existing `.md` file
-2. Extract the `<!-- STORY-STATE -->` comment for context (characters, plot threads, setting, tone, audience, language)
-3. If no state comment exists, analyze the story content to reconstruct context
-4. Continue seamlessly -- match voice, maintain character consistency, advance open plot threads
-5. Append new content to the same file (new chapters/sections)
-6. Update the `<!-- STORY-STATE -->` comment with new state
+## Read on demand
+
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
+
+| When | Read |
+|------|------|
+| Step 0, always first | [references/history.md](references/history.md) |
+| Step 3, choosing audience parameters | [references/audience-guide.md](references/audience-guide.md) |
+| Step 4–5, formatting the `.md` output | [references/formatting-guide.md](references/formatting-guide.md) |
+| Continuing an existing story | [references/continuing.md](references/continuing.md) |

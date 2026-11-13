@@ -42,7 +42,7 @@
 - Code blocks with language tags (```go, ```bash)
 - Bare URLs for resources (just paste the URL on its own line)
 - Images referenced as `![alt text](/images/posts/filename.ext)`
-- Keep articles concise: 50-250 lines typical
+- Keep articles 150-400 lines (~5 min read, 1000-1500 words)
 - No bullet-point walls - prefer prose with occasional lists
 - Bold for emphasis on key terms: **currency units**, **pass floats as strings**
 

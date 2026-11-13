@@ -1,6 +1,6 @@
 ---
 name: sadensmol-task
-description: "Task/worktree management entry point: dispatches `/task SUBCOMMAND` to the project's `PROJECT-task` skill by agterm workspace or cwd, and runs the project-agnostic subcommands itself. Use when the user says: \"task new BRANCH\", \"new task\", \"task plan\", \"task list\", \"task status\", \"task switch\", \"task switch --pair\", \"task switch --single\", \"task pair\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task reviewd\", \"review decisions\", \"task finish\", \"task cleanup\", \"task pull\", \"create worktree\", or a bare \"/task …\"."
+description: "Task/worktree management entry point: dispatches `/task SUBCOMMAND` to the project's `PROJECT-task` skill by agterm workspace or cwd, and runs the project-agnostic subcommands itself. Use when the user says: \"task new BRANCH\", \"new task\", \"task plan\", \"task list\", \"task status\", \"task switch\", \"task switch --pair\", \"task switch --single\", \"task pair\", \"task fresh\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task reviewd\", \"review decisions\", \"task reviewq\", \"review questions\", \"task reviews\", \"review the plan steps\", \"task finish\", \"task cleanup\", \"task pull\", \"create worktree\", \"task help\", or a bare \"/task\" or \"/task …\"."
 ---
 
 # Task (dispatcher)
@@ -35,7 +35,9 @@ a `work_<project>` skill-source checkout).
 
 You need the plugin namespace `<project>`, which gives `<project>-task`. In order:
 
-1. **agterm workspace name** → `<name>-task` directly.
+1. **agterm workspace name** → `<name>-task` directly. When that is this dispatcher
+   itself (workspace `sadensmol`), use `work-<name>-task` — the private company plugin
+   whose namespace cannot reuse the base prefix.
 2. **cwd, via the local, unpublished routes file** (when the workspace is `(unknown)` or
    `(not in agterm)`):
 
@@ -51,65 +53,39 @@ You need the plugin namespace `<project>`, which gives `<project>-task`. In orde
    would loop) all mean: `/task` needs a project workspace. Say so and ask which project;
    never guess.
 
-### Project root — derived from the cwd only
-
-`list`, `switch` and `status --all` work on the project root (the directory holding
-`.worktrees/`):
-
-```bash
-cwd="$(pwd)"; root=""
-case "$cwd" in */.worktrees/*) root="${cwd%%/.worktrees/*}" ;; esac
-if [ -z "$root" ]; then
-  d="$cwd"
-  while [ "$d" != "/" ]; do [ -d "$d/.worktrees" ] && { root="$d"; break; }; d="$(dirname "$d")"; done
-fi
-echo "${root:-NO_ROOT}"
-```
-
-`NO_ROOT` → tell the user to run it from inside the project or one of its worktrees, and
-stop. Never guess a path and never ask a skill for one.
-
 ## Step 3 — handle here, or delegate
 
 **Handled here.** Read the reference when the subcommand runs, and follow it:
 
 | Subcommand | Read now |
 |---|---|
+| bare `/task` (no args), `help` | `references/help.md` |
 | `zed`, `code`, `console` | `references/editor-console.md` |
 | `review` (and "open plannotator" / "open annotate") | `references/review.md` |
 | `changes` ("show changes") | `references/changes.md` |
 | `reviewd` ("review decisions") | `references/reviewd.md` |
+| `reviewq` ("review questions") | `references/reviewq.md` |
+| `reviews` ("review the plan steps") | `references/reviews.md` |
 | `status`, `status --all`, `list`, `switch` (incl. `--pair` / `--single`) | `references/status.md` |
 | `pair` | `references/pair-mode.md` → *`pair`* |
+| `fresh` | `references/fresh.md` |
+
+**`switch` picks an existing worktree, not a session.** It selects the worktree's live
+session, or opens one first with the project's `new-task.sh <branch> --open`. It never does
+git work or setup, so never delegate it to `new`. Follow `references/status.md` → *`switch`*.
 
 **Delegated:** `new`, `plan`, `finish`, `cleanup`, `pull`. Ensure the resolved `<project>-task`
 skill is loaded (do not reload it when its full instructions are already in context) and
 apply the user's **full argument string verbatim** as its args:
 
 - `/task new ABC-1 ABC-2` → `<project>-task` with args `new ABC-1 ABC-2`
-- `/task finish` → args `finish`; bare `/task` → no args (the project skill defaults to `new`)
+- `/task finish` → args `finish`. A bare `/task` is never delegated: it is `help`.
 
 Never re-interpret, expand or run a delegated subcommand yourself.
 
-**OpenCode mode for `plan`:** When a new OpenCode session starts `task plan`, use the
-write-enabled `task` mode. Do not use OpenCode's read-only `plan` mode. The `plan`
-subcommand writes `<worktree-base>/PLAN.md` and opens its approval gate; it does not edit
-application code until approval.
-
-- **A base on `new` is forwarded, never interpreted.** `--base <branch>`, a base task
-  (key or tracker URL), or the prose form ("based on `X`", "on top of `X`", "stacked on
-  `X`") goes down verbatim: `/task new abc-2-foo --base abc-1-foo` → args `new abc-2-foo
-  --base abc-1-foo`; `/task new abc-2-foo based on ABC-1` → args `new abc-2-foo based on
-  ABC-1`. Do not resolve it to a PR, SHA or `origin/<branch>`, and do not drop it as stray
-  prose. The project's `new` resolves a base task to its PRs per repo
-  (`references/new.md` → *Based on a task*); its `finish` opens the stacked PRs and
-  registers the GitHub stack (`sadensmol-github` → "Stacked Pull Requests"); never do
-  either here.
-- **An issue-tracker URL as the branch → the tracker's real branch name.**
-  Never slugify the URL path (`|` in titles becomes `-or-` junk). Fetch the issue through
-  the tracker skill and pass its canonical branch name (Linear's `gitBranchName`, e.g.
-  `proj-12-be-acme-inbound-session-auth`). A slug-derived name creates a second worktree
-  for the same ticket.
+A base on `new` is forwarded verbatim, never interpreted; an issue-tracker URL as the
+branch becomes the tracker's real branch name. Before you forward `new` or `plan`, read
+`references/delegation.md`.
 
 **Shared phase references for project skills.** A project's `new` / `plan` / `finish` /
 `cleanup` reads the matching shared file in this skill's directory and adds its own
@@ -118,59 +94,19 @@ hooks: `references/new.md`, `references/plan.md`, `references/finish.md`,
 subcommand with this pre-flight: `[ -n "${AGTERM_ENABLED:-}" ]`, otherwise tell the user
 "You need to run Claude inside agterm first." and stop.
 
-## Worktree helpers (used by every handled-here subcommand)
+## Worktree helpers
 
 `<sadensmol-task-skill-dir>` is this skill's base directory ("Base directory for this
-skill" when it loads). Shell state does not survive between commands — inline these in
-each command that needs them.
-
-```bash
-cwd="$(pwd)"
-case "$cwd" in
-  */.worktrees/*)
-    root="${cwd%%/.worktrees/*}"; branch="${cwd#*/.worktrees/}"; branch="${branch%%/*}"; b="$branch"
-    base="$root/.worktrees/$branch"; WT="$base" ;;
-  *) echo "NOT_IN_WORKTREE" ;;
-esac
-```
-
-**The "real work" filter.** `task new` refreshes dependency pins in every repo of a
-worktree, so counting those would mark an untouched repo as the one being worked on.
-`real_changes <repo>` prints the changed paths that are real work:
-
-```bash
-real_changes() {
-  git -C "$1" status --porcelain -uall 2>/dev/null | while IFS= read -r line; do
-    f="${line:3}"
-    case "$f" in
-      go.mod|go.sum|*/go.mod|*/go.sum|pubspec.lock|*/pubspec.lock) ;;   # dep pins from `task new`
-      local.properties|*/local.properties|.DS_Store|*/.DS_Store) ;;     # generated / OS
-      .claude/*|*/.claude/*) ;;                                         # harness config
-      *) printf '%s\n' "$f" ;;
-    esac
-  done
-}
-```
+skill" when it loads). `$root`, `$branch`, `$base`, `$WT` and the `real_changes` filter are
+in `references/worktree-helpers.md`.
 
 ## Pair mode
 
 `task new <branch> --pair` opens the task session as a split: a writer agent (the only
 one that edits) and a read-only reviewer of the other agent kind. It is pair programming
-(MUST FOLLOW): every decision — approach, new file or type, where code lives, what it
-reuses, how to do a user request, accepting or rejecting a finding — is made by both
-agents BEFORE the writer types it. The writer frames the problem only, each agent forms
-its own view without seeing the other's, and the writer merges the two; the reviewer
-agrees only after naming the strongest objection it checked. How much loop a decision
-gets follows its weight: a small one is typed with an `FYI:`, an architectural one also
-goes to the user (`pair.md` → *Decision weight*). A user request or opinion question in
-either pane goes through the loop before the user gets an answer; a plain fact answered
-with a citation goes to the user at once. A disagreement after two
-exchanges goes to the user; the writer never settles it alone (`pair.md` → *The decision
-loop*). A message that only runs a command or subcommand (`/task
-finish`, "run the tests") is not a decision: run it and send the peer `FYI: running
-<command>`. Waiting for the reviewer is not stopping: end the turn when no read-only work
-is left; the `pair.py wait` monitor or the liaison wakes you. With no work left at all,
-go idle (`pair.py idle`): restart nothing and wait for new work (`pair.md` → *Idle*).
+(MUST FOLLOW): the writer decides clear cases alone, a hard decision is made by both
+agents BEFORE the writer types it, and the reviewer is in every code review — the full
+rule is `references/pair-mode.md` → *Pair programming*.
 
 The protocol is `pair.md` (each agent gets its path in its start brief). Mode question,
 mode switches and `pair.py` mechanics: `references/pair-mode.md` and `references/new.md`.
@@ -189,57 +125,47 @@ an agreed approach) into the brief or `PLAN.md`.
 
 **Stages — the models follow the task stage (MUST FOLLOW).** A task has two stages.
 **PLAN** runs from `task plan` (before the clarity gate) until the user explicitly
-approves `PLAN.md` (`references/plan.md`, step 6), and again during any later rework of
-`PLAN.md` until the user approves it again. **IMPL** runs after the approval. Both main
-sessions (the writer and the pair reviewer, or the single session) run on the stage model:
+approves `PLAN.md` (`references/plan.md`, step 6). **IMPL** runs after the approval. PLAN →
+IMPL is one-way: the approval ends PLAN for the task. The one exception is the user's
+`reviews` (`references/reviews.md`): it reopens PLAN, and the next approval returns to IMPL. Both main sessions (the
+writer and the pair reviewer, or the single session) run on the stage model:
 
 | Stage | Claude Code | OpenCode |
 |---|---|---|
 | PLAN | `claude-opus-5-5`, effort `xhigh` | `openai/gpt-6-astra`, variant `high` (agent `planning`; reviewer `review`) |
 | IMPL | `claude-opus-5-5`, effort `high` | `openai/gpt-6.1-sol`, variant `high` (agent `main`; reviewer `review`) |
 
-A running session cannot change its model, so a stage change restarts the sessions: run
-`python3 <sadensmol-task-skill-dir>/scripts/pair.py stage --base <worktree-base> plan|impl`
-(add `--single` in a single session opened beside a pair). It records the stage, respawns
-the writer terminal with `--resume` of its conversation on the stage model, and in pair
-mode starts the reviewer again in the new split (`launch --reopen`). The restart runs
-detached: tell the user in one line that both sessions restart and continue, then end
-the turn. It refuses with exit 5 while a pair thread is open: close the thread first.
-`stage … plan --fresh` restarts on PLAN without `--resume`: every agent starts a new
-conversation on `PLAN.md` for the plan discussion (`references/plan.md`, step 6).
+After the approval (MUST FOLLOW):
+
+1. `PLAN.md` is frozen, `## Decisions` included. It is general direction only. No planner,
+   no plan diff, no plan gate, no stage change, no `PLAN.md` edit — until the user runs
+   `reviews`.
+2. All feedback is implementation work: a chat message, a code review, `reviewd` or
+   `reviewq` annotation, a pair objection, a new request, a schema change. It goes through the
+   decision loop, a builder or fixer, and the review checkpoint with the code delta.
+3. A critical decision (*Autonomy*): ask the user through `ask-user`, then implement.
+   Any other design choice: decide it, log it, implement it. Never a plan gate.
+4. The truth is the code, the decision logs and `PLAN.md` as direction. A later user
+   decision wins over `PLAN.md`. Ask the user about a contradiction that the words do not
+   settle.
+
+In both stages, what only this task added has no old data: `sadensmol-programming` →
+*Backward-Compatible Data*, `sadensmol-programming-db` → `references/migrations.md`.
+
+A stage change restarts the sessions: read `references/stages.md` before you run
+`pair.py stage`. `pair.py fresh` restarts them in new conversations, with a clean
+context: after the planner writes `PLAN.md`, after the plan approval, and at the start
+of `finish` (`references/fresh.md`).
 The record is `.pair/config.json` (`stage`) in pair mode and `<worktree-base>/.task-stage`
 in a single session. A session older than the record counts as PLAN: its hook says so,
-and you run `stage … impl` only when the user has explicitly approved `PLAN.md` — never
-infer it from the file. Subagents follow the stage too: in PLAN the planner and the
+and you run `fresh … --then impl` only when the user has explicitly approved `PLAN.md` —
+never infer it from the file. Subagents follow the stage too: in PLAN the planner and the
 liaisons run on `planner-subagent`; in IMPL builders, fixers, code-review agents and
 liaisons run on `main-subagent`; runners run on `cheap-subagent` in both stages.
 
-| Tier | What it does | Model |
-|---|---|---|
-| **runner** | runs commands and reports: tests, build, lint, CI / deploy / rollout watching, PR check and review polling, an e2e dispatch, re-running failed jobs on a listed retry condition | `cheap-subagent` |
-| **planner** | explores the repos and writes or revises `PLAN.md` (`references/plan.md`) | `planner-subagent` |
-| **fixer** | edits code: fixes failing tests, lint, CI or review findings, re-runs the targeted check until green | `main-subagent` |
-| **builder** | implements a new part of the task from `PLAN.md` | `main-subagent` |
-| **code review** | the review agents of the code-review gate (`task review`, `task finish`) | `main-subagent` |
-| **liaison** | settles one decision with the pair reviewer (`pair.md` → *Liaison*) | PLAN: `planner-subagent`; IMPL: `main-subagent` |
-
-A runner never edits a file. Red for any reason other than a listed retry condition →
-it stops and reports; the main session starts a fixer with that report. After a fixer, a
-NEW runner re-runs what the fix must pass — a new lane, not a follow-up message.
-
-**The brief, in this order:** (1) where — base, repo, branch (or PR/run URL); every path
-under the base; (2) inputs — for a fixer/builder the `PLAN.md` path, the failure or
-finding, the files in scope; (3) steps — exact commands; a stack-bound test lane gets a
-stack the main session already brought up healthy and runs only the test command
-against it; for a runner the retry conditions and limit; (4) done — the condition that
-ends the lane; (5) never — commit, push, merge, ask the user, start/stop/restart a
-stack, or take/release the infra lock (stack trouble → `BLOCKED`, the main session
-handles it); (6) report — first line
-`GREEN`, `RED` or `BLOCKED: <reason>`, then at most 20 lines, one per failure: `<test or
-job> — <file:line> — <one-line error>`; a long log goes to a file whose path it gives.
-A builder, fixer or planner then adds one `DECISION: <topic> — <what> — <why> —
-rejected: <alternative> — <file:symbol>` line per decision it made itself (*Model
-decisions log*).
+Every branch runs on its tier's model, and a runner never edits a file. Before you spawn
+a branch or merge one back, read `references/session-branches.md` (tiers, the brief, file
+ownership, naming, merge-back).
 
 **Mandatory — start the branch before you begin, not after it turns out slow:**
 
@@ -256,22 +182,21 @@ decisions log*).
 - Anything that polls or waits; a code-review pass; a research sweep; a doc-and-e2e
   update alongside implementation.
 
-**Run them in parallel** — independent branches go out in one `fan-out`; serialize only
-true dependencies. **Every branch that edits owns its files** (both modes): its brief
-lists them (a directory ends with `/`), and the lists of branches that run at the same
-time do not overlap — split the work by file, and put a branch that needs a file of a
-running one after it. A branch that finds it must touch a file outside its list stops and
-reports `BLOCKED: needs <file>`; it never edits it. In pair mode a builder that types an
-agreed thread owns that thread's `files:` (`pair.md` → *Liaison*). **Name them** what +
-where, a runner's label starting with `run`:
-`run tests api`, `run ci api PR 1465`, `run e2e dev regression`, `fix refund test`,
-`impl inbound bet` — never `work`, `fix` or `task`.
+**Run them in parallel.** Every branch that edits owns its files, and branches that run
+at the same time never share one (`references/session-branches.md`).
 
-**Check on them and merge back.** Use the harness's branch-management facilities to see
-what is live, steer a branch or resume a finished one; never re-spawn for a follow-up. A
-completion arrives as a `<task-notification>` that the operator does not see: read the
-report, keep what belongs to the task (edits are already in the shared worktree), and say
-in chat what it produced — or that it produced nothing.
+**Never wait on a lane's notification alone (MUST FOLLOW).** A lane can stop on a "waiting"
+message and never wake, so its silence says nothing about its work.
+
+- For every test run, the main session starts its own watcher when the lane reports the log
+  path: one `run-background-shell` until-loop, `until ! pgrep -f '[t]ee .*<log>' >/dev/null; do
+  sleep 5; done`. It exits on pass, fail and crash alike. Keep the `[t]`: without it, `pgrep -f`
+  matches the watcher's own shell and the loop never ends.
+- When the watcher exits, read `^(ok|FAIL)` from the log and act on it at once.
+- A lane's final message is its report. "Waiting for the monitor" is not a report. No report
+  1 minute after the run ended → `SendMessage` the lane for it.
+- Never end a turn on "waiting" without a live watcher. A lane not listed by `ListAgents` is
+  not working, whatever it said last.
 
 **Close every branch you opened** (`stop-subagent`), pass or fail, as soon as its unit of
 work ends; a stuck branch makes the session look busy. Without `stop-subagent`, say so and
@@ -284,48 +209,110 @@ that decides whether to spawn or close a branch (`gh pr view <pr> --json
 state,mergedAt`, `gh run list -L 1`) — once it is "not green", the diagnosis moves into a
 branch.
 
-**Branch ≠ console.** A branch is an agent lane. A console is an agterm session for the
-operator to type in, opened only by `console`. A test runs in a branch; the infra it uses
-lives in its own agterm session.
-
 ## User decisions log (MUST FOLLOW)
 
 In both modes, every decision the user accepts — an answer to a question, a plan-gate
-annotation, an approved suggestion, a disputed finding settled — is appended to
-`<worktree-base>/PLAN.md` under `## Decisions`, as the user's words, verbatim, with the
-date. It is passed to the planner and to every builder or fixer brief verbatim, never
-paraphrased. Before any reworked plan or diff goes to the user, check it against that
-list. A proposal that reverses an entry needs the user's explicit yes first. Without a
-`PLAN.md` yet, keep the entries and write them in when the planner creates it.
+annotation, an approved suggestion, a disputed finding settled — is logged as the user's
+words, verbatim, with the date:
+
+- **PLAN:** the planner appends it to `<worktree-base>/PLAN.md` → `## Decisions` as a
+  `U<n>` entry: the user's words under `asked:`, what was decided from them under
+  `decided:`, and what was done according to it under `done:` (`sadensmol-plan` → *The
+  logs*). Without a `PLAN.md` yet, keep the entries and write them in when the planner
+  creates it.
+- **IMPL:** `PLAN.md` is frozen. Run `python3
+  <sadensmol-task-skill-dir>/scripts/pair.py user-decided --base <worktree-base> --stdin`
+  with the user's words. It appends them to `<worktree-base>/.task-user-decisions.md`.
+
+Every entry is passed to the planner (PLAN) and to every builder or fixer brief verbatim,
+never paraphrased. Read both logs; a later explicit decision supersedes an earlier one.
+Before any plan or diff goes to the user, check it against them. A proposal that reverses
+an entry needs the user's explicit yes first.
 
 ## Model decisions log (MUST FOLLOW)
 
 The user reads few diffs while a task runs, so every decision the model makes without
 the user is logged, for review later with `reviewd` (`references/reviewd.md`). A model
-decision is a **normal** or **architectural** one (`pair.md` → *Decision weight*): the
-approach, a new file, type, package, endpoint, table, migration or dependency, where
-code lives, reuse or replacement of existing code, a choice between two options, a
-deviation from `PLAN.md`, or how a vague request was read. Mechanical and small ones
-are not logged. A decision the user made is not a model decision: it goes to `##
-Decisions`.
+decision is one of these: the approach, a new file, type, package, endpoint, table,
+migration or dependency, where code lives, reuse or replacement of existing code, a
+choice between two options, a deviation from `PLAN.md`, or how a vague request was read.
+Mechanical edits, and small changes to one existing file inside an agreed decision, are
+not logged. A decision the user made is not a model decision: it goes to the *User
+decisions log*. On PLAN both share `PLAN.md` → `## Decisions`.
 
-- **The planner** lists its own choices in `PLAN.md` under `## Model decisions`
+- **The planner** lists its own choices in `PLAN.md` under `## Decisions` as `D<n>` entries
   (`references/plan.md`, step 5).
-- **Single mode:** the main session appends each one to `<worktree-base>/.task-decisions.md`
-  when it is made — its own, and every `DECISION:` line of a branch report. Only the main
-  session writes the file. One entry each, `D<n>` numbered on from the last id in `PLAN.md`
-  and the log:
+- **Single mode:** the main session logs each one when it is made — its own, and every
+  `DECISION:` line of a branch report. Only the main session logs, and only through
+  `pair.py`, which numbers the entry `D<n>` and routes it by stage: on PLAN into `PLAN.md`
+  → `## Decisions`, on IMPL into `<worktree-base>/.task-decisions.md`.
 
-  ```markdown
-  ### D<n> — <topic> (<YYYY-MM-DD>, <PLAN|IMPL>, <main|builder|fixer>)
-  - what: <the choice>
+  ```bash
+  python3 <sadensmol-task-skill-dir>/scripts/pair.py model-decided --base <worktree-base> \
+    --topic "<topic>" --by main|builder|fixer --stdin <<'MSG'
+  - decided: <the choice, first person: "I decided to …">
+  - done: <what was done according to it: file:symbol, ticket or plan id; else "not done yet: <what waits>">
   - why: <the reason from the code, the ticket or a convention>
   - rejected: <the alternative not taken>
   - where: <file:symbol, or PLAN.md>
+  MSG
   ```
 
+  It writes `### D<n> — <topic> (<YYYY-MM-DD>, <PLAN|IMPL>, <by>)` and the body.
+
 - **Pair mode:** the pair log `<worktree-base>/.pair/decisions.md` is the log
-  (`pair.md` → *The decision loop*, step 6). Do not write the decision twice.
+  (`pair.md` → *The decision loop*, step 6). The writer logs a decision of this list that
+  it made alone (a clear one, `pair.md` → *Decision weight*) there too, with `pair.py
+  decided`. On PLAN, `pair.py` also shows each entry in
+  `PLAN.md` → `## Decisions` under the same heading. Do not write it a third time. Its
+  body has `decided:`, `done:` (the state when it is logged) and `where:`.
+
+## Q&A log (MUST FOLLOW)
+
+Every question of the task and its answer is logged, in both modes, for `reviewq`
+(`references/reviewq.md`): a user question to either agent, and a question an agent asks
+the user (an `ask-user` item or a question in reply text) with the user's answer. A
+command that only runs something (`pair.md` → *Running a command is not a decision*) is
+not a question.
+
+```bash
+python3 <sadensmol-task-skill-dir>/scripts/pair.py qa --base <worktree-base> --topic "<topic>" --stdin <<'MSG'
+- asked by: user → writer | user → reviewer | user | writer → user | reviewer → user | agent → user
+- question: <verbatim>
+- answer: <single mode, or the user's answer to an agent question: verbatim>
+- writer: <pair: the writer's first answer>
+- reviewer: <pair: the reviewer's answer>
+- merged: <pair: the joint answer>
+- result: <pair: agreed | changed after review | disputed | answered alone>
+MSG
+```
+
+- **Single mode:** `asked by`, `question`, `answer`. Log it right after the answer.
+- **Pair mode:** the agent that closes the loop with the user logs it, once (`pair.md` →
+  *User requests go through the pair*, step 5): its own first answer, the peer's view and
+  the merged answer, under `writer:` / `reviewer:` / `merged:`. A plain fact gets
+  `answer:` and `result: answered alone`. A question the pair asks the user gets the joint
+  recommendation under `merged:` and the user's words under `answer:`.
+- **Routing (by `pair.py`):** on PLAN into `PLAN.md` → `## Q&A`; on IMPL into
+  `<worktree-base>/.task-qa.md`. The command numbers the entry `Q<n>` and adds the date and
+  stage.
+
+On PLAN, `pair.py qa`, `model-decided` and `decided` are the only writes to `PLAN.md`
+outside the planner: they append to `## Q&A` and `## Decisions` and touch no other
+part. While `PLAN.md` does not exist yet, or plannotator shows it, they hold the entry in
+`.scratch/plan-log-pending.json`. The next write, or `pair.py plan-log-flush` before the
+plan gate opens (`references/plan.md`, step 6), puts it in. Entries still held when the
+plan closes go to the IMPL logs; the approved `PLAN.md` never changes. After the approval
+`PLAN.md` carries no new Q&A or model decision: `reviewd` and `reviewq` return all of them
+from every log.
+
+**Item links in PLAN-stage entries.** In the agent's own fields (`decided`, `done`, `why`,
+`rejected`, `where`, `writer`, `reviewer`, `merged`), write plan item ids as `[S3]`
+(`sadensmol-plan` → *Item links*). Pipe the entry through the read-only filter before
+`pair.py`: `python3 <sadensmol-plan-skill-dir>/scripts/plan-links.py <worktree-base>/PLAN.md
+resolve <<'MSG' | python3 <pair.py> qa … --stdin`. The user's words (`asked`, `question`,
+`answer`) go in unbracketed and pass unchanged. Old entries keep their bytes. On IMPL,
+entries keep plain ids: `.task-decisions.md` and `.task-qa.md` do not hold the plan.
 
 ## Quote the question in every answer (MUST FOLLOW)
 
@@ -341,7 +328,10 @@ This covers a direct answer, a pair joint answer, and a report from a branch
 (`<task-notification>`). A reply that answers several questions quotes each one before
 its own answer.
 
-## Never move the user's focus (MUST FOLLOW)
+## Never move the user's focus unless asked (MUST FOLLOW)
+
+**Explicit `switch` is the exception:** select the task session as requested, and open it
+first when it is missing (`references/status.md` → *`switch`*). Never run setup.
 
 Every agterm session a task flow opens (task, single-mode, pair respawn, console, infra,
 test run, plannotator) is created with `agtermctl session new … --no-select`, so it
@@ -349,16 +339,47 @@ opens in the background. Never pass `--follow`, and never run `session select` /
 `session go` / `workspace select` on it. When the session already exists, reuse it and
 leave it unselected. This binds every project's `<project>-task` script too.
 
+## Every extra session is a companion (MUST FOLLOW)
+
+Only the task session itself is a top-level session: the project's `new-task.sh` and
+`pair.py respawn` open it. Every other session a task flow opens (test run, infra, review,
+console, any later helper) is a companion of the task session. Open it only through
+`<sadensmol-task-skill-dir>/scripts/child-session.sh`. This binds plans, runner briefs and
+scratch scripts too. The one exception is a page companion (next section): it has no
+shell, and agterm creates it from the page.
+
+- Never call `agtermctl session new` for it directly.
+- Never pass `--after` for it, and never write `└─` or `├─` into a session name.
+- There is no fallback. If the helper fails, stop and report the error.
+
+## Show the user anything in a page companion (MUST FOLLOW)
+
+Anything you show the user to look at or listen to goes in a local HTML page under the
+scratch dir, opened as a page companion of the task session. Never ask the user to open a
+scratch file, an `.md` file or any other path. Chat answers stay in chat; plannotator gates
+stay in plannotator.
+
+```bash
+agtermctl session overlay open --html "$F" --companion --target "$AGTERM_SESSION_ID" --socket "$AGTERM_SOCKET"
+```
+
+- Style the page in the plannotator theme (`references/plannotator.md` → *Theme*).
+- No `--follow` (*Never move the user's focus*). `--cwd DIR` only when the page loads files,
+  and only the directory of those files; `--js` only when the page needs it.
+- Save the printed id. Check the node in `tree --json`: `content` is `page`, `parent` is
+  this session, `htmlOverlays[0].state` is `loaded`.
+- After you rewrite the page: `agtermctl session overlay reload --target <saved id>`.
+- A failed open inside agterm is an error: report it. Outside agterm (`AGTERM_ENABLED`
+  unset), run `open "$F"` on the HTML page and say so in chat.
+- `pair.py` `stage`, `fresh` and `respawn` exit 5 while a companion is open. Before a
+  restart, close only this task's passive pages by saved id. For live reviews, follow
+  `references/plannotator.md`. Never restart while a current gate waits for the user.
+
 ## Running infra (MUST FOLLOW)
 
 Before the main session starts a local stack, read `references/infra.md` and follow it.
-The hard points: **the main session owns every stack** — it runs the project's single
-bring-up command itself; no subagent (runner, fixer, builder) ever starts or stops a
-stack or touches the lock; check the container runtime first; take the worktree's
-`.infra.lock`; the stack runs in its own agterm session (`--no-select`, below the task
-session); one infra session at a time, serving one related test run, so stack-bound
-runners are spawned one at a time against the healthy stack; tear down and release the
-lock in one command the moment the run ends.
+**The main session owns every stack**: no subagent (runner, fixer, builder) ever starts or
+stops a stack or touches the lock.
 
 ## Plannotator binary (shared)
 
@@ -369,49 +390,18 @@ through the helper, **in the background** (`run-background-shell`) (MUST FOLLOW)
 cd <worktree-base> && bash <sadensmol-task-skill-dir>/scripts/plannotator-session.sh <plannotator args…>
 ```
 
-`<helper>` below = `<sadensmol-task-skill-dir>/scripts/plannotator-session.sh`.
-
-- The helper resolves the binary (`PLANNOTATOR` env, else `command -v plannotator`, else
-  `~/.local/bin/plannotator`; never type a bare `plannotator`). On
-  `PLANNOTATOR_NOT_FOUND`, tell the user to install it or export `PLANNOTATOR`, and stop.
-- It opens plannotator in its own agterm session `└─ review <task ID>` directly below the
-  task session (`--no-select`), runs it at the worktree base, prints its output, exits
-  with its status and closes that session — so the background run returns the
-  annotations as a `<task-notification>`. Outside agterm it runs plannotator directly.
-- The page opens as an agterm HTML overlay inside that review session (via
-  `PLANNOTATOR_BROWSER`, default `~/.local/bin/plannotator-agterm-open`) — never on the
-  task session, never in a browser. `PLANNOTATOR_OVERLAY_OPENER_NOT_FOUND` or
-  `OVERLAY_OPEN_FAILED` → report it; never fall back to a browser.
-- Never a bare binary launch, never a trailing `&`, `nohup` or `disown` (the notification
-  would be lost). A foreground call freezes the session. One launch; no polling, no
-  relaunch while it runs. `REVIEW_SESSION_CLOSED` = the operator closed it: no
-  annotations, do not relaunch.
-- **One live instance per worktree (MUST FOLLOW).** `review` and `annotate` share one
-  slot per worktree base; the helper holds it as `<base>/.scratch/plannotator.lock`.
-  Other worktrees (other tasks) run their own instance and review session in parallel —
-  never wait on them. Check this worktree's slot with
-  `cd <worktree-base> && bash <helper> --status` (`RUNNING: <args> (session <id>)` or
-  `NONE`). A launch while the slot is held prints `PLANNOTATOR_ALREADY_RUNNING` and
-  exits 4 without launching. Never `pgrep`/`pkill` plannotator by name: that matches
-  other tasks' instances.
-- **Force-closing needs the user's permission.** Never kill or `session close` a live
-  instance (closing the `└─ review` session kills it too) on your own — not even on
-  "reopen"/"refresh". Ask through `ask-user`: **Force-close & open new** (then
-  `bash <helper> --close` from the worktree base, expect `CLOSED`, launch one) or **Keep
-  existing** (wait until the user closes it).
-- **Stale `annotate`.** It reads the file once at launch. When you edit the exact `.md`
-  an open `annotate` shows: finish all edits for the turn, tell the user the tab is
-  stale, ask them to submit/close it, wait until `bash <helper> --status` shows `NONE`,
-  then relaunch on the same file. Edits to another doc → just say which file
-  changed. Never turn an annotate into a `review` (or back) as a refresh. No `annotate`
-  running → a doc edit opens nothing; mention it and offer to reopen.
+One live instance per worktree; follow the reuse and note-preservation rules in
+`references/plannotator.md`. Read
+`references/plannotator.md` before every launch, and when you edit a `.md` that an open
+`annotate` shows. A generated page follows the plannotator theme (`plannotator.md` →
+*Theme*).
 
 ## Mermaid
 
 Before you open plannotator on, hand over, or commit any `.md` containing a mermaid
 block, read `references/mermaid.md` and validate every block.
 
-## Test scope — targeted while working, FULL suite only at `finish` (MUST FOLLOW)
+## Test scope — targeted while working, full suite in CI at `finish` (MUST FOLLOW)
 
 This overrides any project wording that asks for the whole suite earlier.
 
@@ -419,13 +409,63 @@ This overrides any project wording that asks for the whole suite earlier.
   after `review`), run **only** the tests that cover the code you change — the test file,
   package, suite or `-run`/`--name` filter, plus direct callers. A full-repo run here is
   waste; do not ask the operator to stage shared infra for it.
-- The full suite runs only after the user says `task finish` (every changed repo: unit,
-  integration, frontend, e2e — whatever the project lists).
+- The full suite runs only after the user says `task finish`, in each PR's CI (every
+  changed repo: unit, integration, frontend, e2e — whatever the project lists). Locally
+  `finish` runs build, lint and the changed packages' suites (`references/finish.md` §4).
 - `review` needs only the targeted tests for the changed behaviour to be green.
 - "Never commit red" is enforced at `finish`. In-progress code may leave untouched parts
   unverified; it may not have its own tests failing.
 - No targeted run possible → run the narrowest scope that covers it and say which.
 - Every run, targeted or full, happens in a session branch.
+
+## Test sessions — close what is done (MUST FOLLOW)
+
+- Capture each test session id. Read and save its result, then close a successful session
+  at once: `agtermctl session close --target <id>`. Pass `--socket "$AGTERM_SOCKET"` when set.
+- Keep a failed session open only while it helps the diagnosis. Name its id in the report.
+- Before you retry that run, save the failure output you need and close the old failed or
+  broken session. After `RED`, the main session closes it before it starts the new runner.
+  Start the retry as a fresh attempt.
+- Never hide a close error. Verify that the id left `agtermctl tree`.
+- Close only test sessions that this task opened.
+- Infra teardown and lock release still happen on pass or fail, even when a failed terminal
+  stays open. Closing an agent branch does not close its agterm session.
+
+## Autonomy — the user is needed at three points only (MUST FOLLOW)
+
+The user's rule (2026-11-11): "I ONLY NEEDED - REVIEW PLAN - REVIEW DIFF BEFORE PR -
+APPROVE ONLY CRITICAL DECISIONS." Nothing else stops the task.
+
+1. **The plan gate** (`references/plan.md`, step 6).
+2. **The pre-PR diff gate** (`references/finish.md` → §4b). Get there on your own:
+   implement, test, code-review, fix, then open it.
+3. **A critical decision.** A decision is critical when it:
+   - destroys data or cannot be undone: drop data, force-push over another person's
+     work, delete a branch or an env, rewrite shared history;
+   - touches production: a deploy, a prod config or data change, a run against prod;
+   - changes the scope beyond the ticket and the user's words, or adds a `Not requested`
+     item;
+   - reverses an explicit user decision (*User decisions log*);
+   - skips or bends a guard (*Guards*);
+   - settles a security, money or compliance trade-off that the ticket, the code and the
+     conventions do not settle;
+   - depends on a missing fact that changes the deliverable or its acceptance, after you
+     searched every source.
+
+Every other decision is yours: the approach, a new file, type, package, endpoint, table,
+migration or dependency, how to read a vague request, a pair dispute, a review finding.
+Decide from the code, the ticket and the conventions, log it
+(*Model decisions log*), and go on. The user checks it later with `reviewd`.
+
+- Ask a critical decision through `ask-user`: the recommended option first, with its
+  reason. Ask all critical decisions that are due at the same time in one call.
+- **On PLAN, a critical decision never stops the planning.** It goes into `PLAN.md` →
+  `## Questions to clarify` with the answer the plan assumes. The user answers these
+  after the plan is written, one question per `ask-user` call (`references/plan.md`,
+  step 6).
+- Before you ask, finish all work that does not need the answer.
+- Never end a turn on a question outside these three points. A status line is not a stop.
+- A pair agreement is never user approval. A plan approval never approves a diff.
 
 ## Run the task to completion — never stop in the middle (MUST FOLLOW)
 
@@ -438,31 +478,60 @@ blocker); two reasonable implementations where the ticket or code implies one (p
 one matching existing code, say so in one line at the end); the task is bigger than
 expected.
 
-**Stop only when the user must decide:** the plan-approval gate and the pre-commit review
-gate; a destructive or irreversible action (dropping data, force-pushing over someone
-else's work, deleting a branch/env, rewriting shared history); production impact; a real
-scope change (report it in one or two lines and ask); a genuine ambiguity that changes the
-deliverable and that the ticket, code and conventions cannot settle (ask ONE short
-question). Then report the finished result, not a mid-way status.
+**Stop only at the three points of *Autonomy*.** Then report the finished result, not a
+mid-way status.
 
-## Review checkpoint — stop after code changes (MUST FOLLOW)
+## Guards — skip only with `ask-user` permission (MUST FOLLOW)
 
-After every batch of code changes, put the diff in front of the user before committing
-or running `finish`: ask the user to review and wait, run `changes`, or run `review` (the
-default; it picks `review` or `annotate` by state, so a docs-only task is checkpointed
-with `annotate`). Then wait, or address the annotations. Going from code straight to
-`finish` is not allowed. No annotations = approved. Every re-opened code `review` first
-explains what changed since the last one and why, as a plannotator Guided Review plus a
-chat notice (`references/review.md` → *Changes since the last review*).
+A guard is any gate or MUST rule the task skills state (the project skill names its own:
+merge conditions, required checks, e2e gates, review approval, ...).
 
-**Local code-review runs ONLY on the user's request or inside `task finish` (MUST
-FOLLOW).** Run the `sadensmol-code-review` skill only when the user asks for a review, or
-inside a `finish` the user started, after the approval gate. Never start it on your own:
-not after a batch of code changes, not when tests go green, not on pair agreement, not
-before the user approved the diff. There, **fix every P0 and every P1**; report every P2
+**A guard that does not apply is not a skip — decide it alone (MUST FOLLOW).** When the
+change cannot touch what the guard protects, drop the guard without asking and say so in
+one line of the report: no code change (docs and tracker work only) → no test run, e2e
+gate or deploy watch. The user's rule (2026-11-12): "you should decide such things
+automatically without my attention!!!". Ask only when the guard applies and you want to
+bend it.
+
+- Skipping or bending a guard needs the user's explicit permission through `ask-user`:
+  one question per guard, naming the guard, the evidence and the risk. Never ask it in
+  chat text.
+- Only the answer to that `ask-user` question counts. A chat reply is never permission:
+  not "go", "continue", "what are we waiting?", nor a yes to a plan that only contained
+  the skip.
+- No permission = the guard holds: stop and report it as `needs you`.
+- One permission covers one guard on one PR or check, never the next.
+
+## Pre-PR diff gate — the user sees the diff once, before any commit (MUST FOLLOW)
+
+Do not stop after a batch of code changes. Finish the work first: every step of
+`PLAN.md` or of the user request, its targeted tests green, then the pre-PR preparation
+of `references/finish.md` (local green gate, local code review and its fixes, task-scope
+check). Then open the gate with `review` (`references/finish.md` → §4b); it picks
+`review` or `annotate` by state, so a docs-only task gets `annotate`. No commit, push or
+PR before the user approves that exact diff. A re-opened code `review` with a non-empty
+delta shows ONLY the changes since the last one (`review --patch-file`), plus a
+plannotator Guided Review and a chat notice that explain what changed and why
+(`references/review.md` → *Changes since the last review*). An empty delta opens the whole
+current uncommitted worktree diff, without a guide. The first review opens the whole diff
+too. Plan and code reviews keep separate baselines. Before a code `review` opens, discard
+the `go.mod`/`go.sum` changes of every repo that has no other real change
+(`references/review.md` → *Drop go mod churn before a code review*). The user can still
+ask for `review` or `changes` at any time.
+
+**The local code review runs in the pre-PR preparation, or on the user's request (MUST
+FOLLOW).** Run `sadensmol-code-review` in Local mode in `references/finish.md` §4, before
+the pre-PR diff gate. The user's rule of 2026-11-11 (*Autonomy*) is the request, and the
+mode is Local: do not ask the mode. Never run it at another time: not after each batch,
+not when tests go green, not on pair agreement. There, **fix every P0 and every P1**; report every P2
 and fix it only when it is critical or trivially easy; say which P2s you fixed and which
 you left. Re-run until no P0/P1 remains. Green tests, a clean plannotator review, or an
 agentic PR review never replace it. Each project's `finish` places this gate.
+
+## Docs — once, at the end (MUST FOLLOW)
+
+Never update docs while the code still changes. Docs are the last change before the
+merge: `references/finish.md` → §6a. No merge and no `cleanup` before it is done.
 
 ## Never suggest cleanup while work remains
 
@@ -473,14 +542,21 @@ regression run), and no work is left — or when the user asks. Otherwise the ne
 `finish` or more work. An operator-accepted final state with failed or bypassed checks is
 reported as complete with accepted exceptions, and cleanup as `force required`.
 
-## Adding a new project
+## Read on demand
 
-1. Give the project's plugin a `task` skill with `user-invocable: false`. It implements
-   only `new` / `plan` / `finish` / `cleanup` (reading the shared `references/` files for
-   each), `pull` (its source checkouts fast-forwarded to their default branches, refused
-   inside a worktree), plus its layout, preflight and definition of done. Its `new` writes the ticket id
-   into the agterm session context; `status` reports that id without interpreting it.
-2. Name the agterm workspace after the plugin — Step 2 then resolves it with no edit here.
-3. For cwd resolution outside agterm, add `{ "cwd": "<substring>", "skill":
-   "<plugin>:<skill>" }` to the local, unpublished `~/.agents/sadensmol-router-routes.json`.
-   Nothing is added to this file.
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
+
+| When | Read |
+|---|---|
+| A handled-here subcommand runs | its file in the Step 3 table |
+| You forward `new` or `plan` | `references/delegation.md` |
+| A project's `new` / `plan` / `finish` / `cleanup` runs | `references/new.md`, `plan.md`, `finish.md`, `cleanup.md` |
+| You need `$root`, `$branch`, `$base`, `$WT` or `real_changes` | `references/worktree-helpers.md` |
+| You spawn a session branch or merge one back | `references/session-branches.md` |
+| You change the task stage | `references/stages.md` |
+| You work in a pair session | `references/pair-mode.md` → *Pair programming*, then `pair.md` |
+| You launch plannotator, edit a `.md` that an open `annotate` shows, or generate a page for it (theme) | `references/plannotator.md` |
+| You start a local stack | `references/infra.md` |
+| A `.md` with a mermaid block goes to plannotator, a hand-over or a commit | `references/mermaid.md` |
+| You add a new project | `references/adding-a-project.md` |

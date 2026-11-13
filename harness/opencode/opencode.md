@@ -19,7 +19,7 @@ never in that shared one.
 
 ## load-skill
 
-The `skill` tool: `skill({ name: "sadensmol-go-programming" })`. Skill ids are flat and
+The `skill` tool: `skill({ name: "sadensmol-programming-go" })`. Skill ids are flat and
 namespace-prefixed; there is no colon form. Reading the `SKILL.md` file is not a
 substitute.
 
@@ -119,6 +119,11 @@ skill must not promise to cancel one — it should avoid launching work it canno
 No worktree tool in the registry. Create one with `bash` and plain git, and keep every path
 under it for the rest of the session. There is no session fork either; `opencode session`
 offers only `list` and `delete`.
+
+## session-transcript
+
+Full transcript export is not implemented by this capability. Use a labelled partial
+snapshot from your context, and say that it is not the transcript.
 
 ## Not here at all
 

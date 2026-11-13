@@ -17,7 +17,7 @@ positive one whenever both look like they match.
 ## NEVER load it for — absolute
 
 - Debugging, reproducing, or root-causing anything (→ `superpowers:systematic-debugging`).
-- Writing, fixing, or running tests of any kind (→ the language skill / `sadensmol-go-integration-tests`).
+- Writing, fixing, or running tests of any kind (→ the language skill / `sadensmol-programming-go` → `references/integration-tests.md`).
 - Fixing a bug or patching a defect, even a structural-looking one. Badly structured code
   is not a trigger while fixing it.
 - Ordinary feature work on existing code: a new field, a new branch, a new endpoint
@@ -42,4 +42,4 @@ advice there turns the task into a rewrite.
 
 The skill itself requires announcing every candidate pattern and getting an explicit yes
 before applying it — do not shortcut that gate. System-level topology (service
-decomposition, deployment, scaling, ADRs) → `sadensmol-system-design` instead.
+decomposition, deployment, scaling, ADRs) → `sadensmol-programming-system-design` instead.

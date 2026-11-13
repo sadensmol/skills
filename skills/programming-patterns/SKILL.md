@@ -14,11 +14,11 @@ justify picking none.
 Stop and do not apply pattern guidance when the task is:
 
 - Debugging, reproducing a failure, or root-causing anything → `superpowers:systematic-debugging`
-- Writing, fixing, or running tests → the language skill's testing section / `sadensmol-go-integration-tests`
+- Writing, fixing, or running tests → the language skill's testing section / `sadensmol-programming-go` → `references/integration-tests.md`
 - Fixing a bug or patching a defect — even a structural-looking one. Fix it in place.
 - A small local edit: a new field, a new branch, a new endpoint that copies the one next to it
 - Reviewing code → `sadensmol-code-review`
-- System topology (service decomposition, deployment, scaling, infra) → `sadensmol-system-design`
+- System topology (service decomposition, deployment, scaling, infra) → `sadensmol-programming-system-design`
 
 In every one of these, the existing code's shape is a **constraint you inherit**,
 not a decision you get to make. Suggesting a pattern there converts a bounded
@@ -135,11 +135,14 @@ specific refactoring that fixes it, and to the ones that make it worse.
 
 ## Relationship to other skills
 
-- **Language idioms** — `sadensmol-go-programming`, `typescript-programming`,
-  `dart-programming`, `flutter-programming`, `swift-programming`. They own
+- **Language-agnostic principles** — `sadensmol-programming` owns naming, comments,
+  code shape, domain types, layers, errors and test principles. This skill never
+  overrides it.
+- **Language idioms** — `sadensmol-programming-go`, `sadensmol-programming-typescript`,
+  `sadensmol-programming-dart`, `sadensmol-programming-flutter`, `sadensmol-programming-swift`, `sadensmol-programming-python`. They own
   syntax, naming, error handling, project layout, and testing. This skill never
   overrides them.
-- **System-level topology** — `sadensmol-system-design` owns service
+- **System-level topology** — `sadensmol-programming-system-design` owns service
   decomposition, deployment, scaling, and ADRs. This skill stops at the process
   boundary.
 - **Design conversation** — `superpowers:brainstorming` owns getting to a design

@@ -17,6 +17,11 @@ per-project layout. When such a value is needed, get it in this order:
 When you catch a hardcoded value in a `sadensmol-` skill, replace it with one of those
 four — do not just work around it.
 
+A skill that generates any user-facing HTML page (opened in plannotator, as a page
+companion, or standalone), including embedded documents, follows `sadensmol-task` →
+`references/plannotator.md` → *Theme*, through the skill-relative
+`scripts/plannotator-theme.sh`.
+
 ## When the user calls out a missed skill load
 
 Fix the rule that missed it. Do not just load the skill and move on — edit the router's

@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Run plannotator in its own agterm session, placed directly below the calling
-# session and named like a tree leaf: "└─ review <task id>". Blocks until
+# Run plannotator in its own agterm session "review <task id>", a companion of the
+# calling session, opened through child-session.sh. Blocks until
 # plannotator exits, then prints its output and exits with its status, so an
 # agent running this in a background shell gets the annotations back.
 #
 # Usage: bash plannotator-session.sh <plannotator args...>
 #   e.g. bash plannotator-session.sh review
 #        bash plannotator-session.sh annotate PLAN.md --gate
+#        PLANNOTATOR_GUIDE=<guide.json> bash plannotator-session.sh review   # opens on that guide
+#        PLANNOTATOR_PROMOTE=code bash plannotator-session.sh review   # moves the code baseline on open
+#        PLANNOTATOR_PROMOTE=plan bash plannotator-session.sh annotate PLAN.md --gate
 #        bash plannotator-session.sh --status   # RUNNING: <args> (session <id>) | NONE
 #        bash plannotator-session.sh --close    # close this base's live instance
 #
@@ -16,6 +19,8 @@
 # One live instance per base (worktree): review and annotate share the slot, held by
 # the lock dir <base>/.scratch/plannotator.lock. A launch while it is held prints
 # PLANNOTATOR_ALREADY_RUNNING and exits 4. Other worktrees run their own in parallel.
+#
+# `annotate PLAN.md` runs only in the PLAN stage: on IMPL `pair.py plan-open` refuses it.
 set -u
 
 [ $# -gt 0 ] || { echo "usage: $0 <plannotator args...> | --status | --close" >&2; exit 2; }
@@ -33,7 +38,7 @@ case "$cwd" in
   *) base="$cwd"; branch="$(basename "$cwd")" ;;
 esac
 task_id="$(printf '%s' "$branch" | grep -oiE '^[a-z]+-[0-9]+' | tr '[:lower:]' '[:upper:]')"
-name="└─ review ${task_id:-$branch}"
+name="review ${task_id:-$branch}"
 
 lock="$base/.scratch/plannotator.lock"
 
@@ -75,6 +80,35 @@ case "$1" in
 esac
 
 mkdir -p "$base/.scratch"
+
+# guide-open.sh always wraps the opener. PLANNOTATOR_GUIDE=<guide.json>: the page opens
+# on that Guided Review; guide-open.sh loads it into the server first. PLANNOTATOR_PROMOTE
+# =code|plan: the matching baseline is staged under the lock (review-snapshot.sh save |
+# plan-save) and promoted only when the page opens; empty promotes nothing. Results land
+# in <base>/.scratch/review-guide.status.
+self_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "$1" = annotate ]; then
+  base_real="$(cd "$base" && pwd -P)"
+  for arg in "$@"; do
+    [ "$(basename -- "$arg")" = PLAN.md ] || continue
+    [ "$(cd "$base" && cd "$(dirname -- "$arg")" 2>/dev/null && pwd -P)" = "$base_real" ] || continue
+    python3 "$self_dir/pair.py" plan-open --base "$base" || exit 1
+  done
+fi
+guide="${PLANNOTATOR_GUIDE:-}"
+guide_status="$base/.scratch/review-guide.status"
+promote="${PLANNOTATOR_PROMOTE:-}"
+case "$promote" in
+  code) stage=save ;;
+  plan) stage=plan-save ;;
+  "") stage="" ;;
+  *) echo "PLANNOTATOR_PROMOTE must be code, plan or empty: $promote" >&2; exit 2 ;;
+esac
+if [ -n "$guide" ]; then
+  [ -f "$guide" ] || { echo "PLANNOTATOR_GUIDE_NOT_FOUND: $guide"; exit 2; }
+  guide="$(cd "$(dirname "$guide")" && pwd)/$(basename "$guide")"
+fi
+
 if ! mkdir "$lock" 2>/dev/null; then
   if lock_held; then echo "PLANNOTATOR_ALREADY_RUNNING: $(lock_info)"; exit 4; fi
   rm -rf "$lock"   # stale: its owner is gone
@@ -84,8 +118,15 @@ printf '%s\n' "$*" > "$lock/args"
 echo "$$" > "$lock/pid"
 release_lock() { [ "$(cat "$lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$lock"; }
 trap release_lock EXIT
+rm -f "$guide_status"
+
+if [ -n "$stage" ]; then
+  out="$(cd "$base" && bash "$self_dir/review-snapshot.sh" "$stage" 2>&1)" || { printf '%s\n' "$out"; exit 1; }
+fi
 
 if [ -z "${AGTERM_ENABLED:-}" ] || [ -z "${AGTERM_SESSION_ID:-}" ] || ! command -v agtermctl >/dev/null 2>&1; then
+  export PLANNOTATOR_GUIDE="$guide" PLANNOTATOR_GUIDE_STATUS="$guide_status" PLANNOTATOR_PROMOTE="$promote" \
+    PLANNOTATOR_GUIDE_OPENER="${PLANNOTATOR_BROWSER:-open}" PLANNOTATOR_BROWSER="$self_dir/guide-open.sh"
   # exec keeps this pid, so the lock follows plannotator and goes stale when it exits
   cd "$base" && exec "$PLANNOTATOR" "$@"
 fi
@@ -102,14 +143,16 @@ trap 'rm -rf "$run"; release_lock' EXIT
 # The session runs this file; tee keeps the output visible there and gives the
 # agent a copy. pipestatus[1] is plannotator's own exit status.
 {
-  printf 'export PLANNOTATOR_BROWSER=%q\n' "$opener"
+  printf 'export PLANNOTATOR_GUIDE=%q PLANNOTATOR_GUIDE_STATUS=%q PLANNOTATOR_GUIDE_OPENER=%q\n' \
+    "$guide" "$guide_status" "$opener"
+  printf 'export PLANNOTATOR_PROMOTE=%q PLANNOTATOR_BROWSER=%q\n' "$promote" "$self_dir/guide-open.sh"
   printf 'cd %q || exit 1\n' "$base"
   printf '%q' "$PLANNOTATOR"; printf ' %q' "$@"; printf ' 2>&1 | tee %q\n' "$run/out"
   printf 'echo "${pipestatus[1]}" > %q\n' "$run/rc"
 } > "$run/run.zsh"
 
-sid="$(agtermctl session new --cwd "$base" --name "$name" --after "$AGTERM_SESSION_ID" \
-  --no-select --command "zsh -l $run/run.zsh")" || { echo "AGTERM_SESSION_FAILED" >&2; exit 1; }
+sid="$(bash "$self_dir/child-session.sh" "$name" --cwd "$base" --no-select \
+  --command "zsh -l $run/run.zsh")" || { echo "AGTERM_SESSION_FAILED" >&2; exit 1; }
 echo "$sid" > "$lock/sid"
 echo "plannotator is running in agterm session '$name' ($sid)"
 

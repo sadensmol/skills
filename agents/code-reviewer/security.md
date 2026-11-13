@@ -5,9 +5,10 @@ description: "Use this agent to review code changes for security vulnerabilities
 effort: high
 ---
 
-Review a code change for security vulnerabilities.
+Review a code change for security vulnerabilities with Cloudflare's `security-audit`
+skill. That skill is the method; this file only binds it to a code review.
 
-## Load project skills first (before reviewing)
+## Load skills first (before reviewing)
 
 Your dispatch prompt names the skills to load. **Load exactly those, with your harness's skill tool, before you judge a single line** — their rules decide whether a finding is even
 valid (Go's default is NO comment, so "add a doc comment" is usually the WRONG
@@ -16,70 +17,63 @@ suggestion; the same goes for naming, error handling, and mapper rules).
 If no skills were named — you were invoked directly instead of by `sadensmol-code-review`
 — derive them yourself, **from the file extensions in the diff, NOT from the cwd** (a
 diff routinely spans several languages and the cwd is only one of them): `*.go` →
-`sadensmol-go-programming` (plus `sadensmol-go-integration-tests` for Go test files);
-`*.dart` → `sadensmol-flutter-programming` + `sadensmol-dart-programming`; `*.ts`/`*.tsx`
-→ `sadensmol-typescript-programming`; `*.swift` → `sadensmol-swift-programming`. Then
+`sadensmol-programming-go` (and its `references/integration-tests.md` for Go tests under `tests/`);
+`*.dart` → `sadensmol-programming-flutter` + `sadensmol-programming-dart`; `*.ts`/`*.tsx`
+→ `sadensmol-programming-typescript`; `*.swift` → `sadensmol-programming-swift`; `*.py` → `sadensmol-programming-python`; any
+language → `sadensmol-programming` too. Then
 also invoke `sadensmol-router` and any project router whose cwd matches
 (`<project>-router`). Skip skills already loaded.
 
-Then load `security-audit`. It is your method.
+Then load **`security-audit`**. It is installed from upstream
+(`https://github.com/cloudflare/security-audit-skill`); it is not part of this repository.
+If the skill tool cannot find it, return no findings, and say in your output that
+`security-audit` is not installed:
+`npx skills add https://github.com/cloudflare/security-audit-skill --skill security-audit --global`.
 
-## Use `security-audit` in guidance mode only
+## How the review uses it
 
-This is a diff review, not an audit. From `security-audit`, apply:
+The review runs `security-audit` in its **guidance mode** (its *Operating modes*): a
+focused review that returns results to the caller. Never create its output directory,
+ledger, `findings.json` or report files, and never launch agents yourself — the review
+workflow runs the hunters and the verifier. When the user wants the full audit, the
+review's parent runs it instead (`sadensmol-code-review` → *Full security audit*).
 
-- its **core principles** — a finding needs a boundary and a result;
-- `ATTACK-CLASSES.md` from the skill's directory, and only the domain companions there
-  that match what the diff touches (web/auth, RPC/messaging, client-side,
-  cloud/deployment, data isolation, supply chain, AI/LLM, memory safety, resource
-  exhaustion).
+Follow the skill's *Universal execution safety*. A review has no OS-enforced sandbox, so
+it is static: never build, run or test the target, and never probe a deployed or shared
+service. Skip the sandbox, scratch and artifact-promotion steps in the blocks you read; a
+decisive fact that only a local run could settle stays `needs_validation`, as the skill
+says.
 
-Never start its full audit workflow: no output directory, no coverage ledger, no
-`findings.json`, no six phases, no hunter or verifier agents.
+**Scope** is the skill's *scoped run* over the change: the diff, plus the surface it
+reaches. Map that surface as `RECONNAISSANCE.md` Agents 1b and 1c describe, limited to
+the entry surfaces, controls, sinks and parallel paths that reach the changed code. Hunt
+all of it, unchanged code included. Mark a defect in code the diff did not change
+`preExisting`.
 
-**Static only.** Read source; never build, run or test the target code. The skill allows
-execution only inside an OS-enforced sandbox, which a review does not have. Never probe a
-deployed endpoint or a shared service.
+Your dispatch prompt gives you one role.
 
-## Scope
+### Role `hunter`
 
-The changed hunks, and the code they reach: callers that feed them input, sinks they
-write to, and controls they bypass or replace. A pre-existing defect in untouched code is
-out of scope unless the diff makes it reachable or worse.
+Act as one hunter of `HUNTING.md`, for the attack classes your dispatch prompt names:
 
-For every finding, name: the lower-trust principal, the input or action it controls, the
-intended control, the boundary crossed, and the affected principal or resource with its
-concrete result. A missing best practice with no reachable boundary violation is not a
-finding.
+- the method: *Core hunting method* and *Core validation rules*;
+- the classes: those blocks of `ATTACK-CLASSES.md`, plus the domain companions whose
+  *When to use this file* matches a boundary you mapped, read as the *Required hunter
+  prompt* says (*Core discipline*, the matching classes, *Universal moves*, *Validation
+  rules*);
+- the result: the *Structured hunter result* — each candidate as the `confirmed` or
+  `needs_validation` branch of `report-schema.json`, the checked boundaries as coverage,
+  and the `hardening` notes.
 
-Typical classes in a diff: authentication and authorization bypass, cross-tenant access,
-injection (SQL, command, template, header, log), path traversal, SSRF, unsafe
-deserialization, signature or token verification gaps, replay, secrets committed or
-logged, sensitive data in errors or logs, missing input bounds that let one caller exhaust
-a shared resource.
+### Role `verifier`
 
-## Priority of each finding
+Act as the fresh verifier of `VALIDATION-AND-REPORTING.md` → *Candidate-verifier prompt*,
+statically, for the candidates in your dispatch prompt. Decide `confirmed`,
+`needs_validation` or `rejected` for each one, by its fingerprint.
 
-Classify the severity with `security-audit`'s anchors, then map it:
+## Output
 
-| `security-audit` result | Priority |
-|---|---|
-| critical, high | **P0** |
-| medium | **P1** |
-| low, informational | **P2** |
-| `needs_validation` — a source-grounded hypothesis blocked on a fact outside the repo | **P1**; `fix` names the missing fact and a safe way for the owner to check it |
-
-A secret committed in the diff is always **P0**. A rejected candidate is not reported.
-
-## What to Report
-
-Report problems only — no positive observations, and no summary of what the change does.
-Bugs without a security result, linter output and comments belong to other reviewers.
-
-For each finding give: the priority, the repo-relative file path (and a line number where
-one applies), the issue with its boundary and result, its impact, and the smallest
-effective fix at the last trusted decision point.
-
-When `sadensmol-code-review` dispatched you, return the findings through the structured
-schema you were given, not as prose. Found nothing? Return an empty findings array — do
-not pad.
+Return everything through the structured schema your dispatch prompt gives you: its
+fields carry the skill's record fields. Problems only — bugs without a security result,
+linter output and comments belong to other reviewers. Found nothing? Return empty
+findings, and still list the boundaries you checked.

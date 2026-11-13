@@ -12,14 +12,17 @@ bash <project-skill-dir>/scripts/new-task.sh <branch> [--base <branch> | --base 
 
 - **Branch does not exist** → cut a new branch and worktree(s), refresh deps per the
   project, open the session, seed `task plan` (per the project's auto-plan rule).
-- **Branch or worktree already exists** → reuse it (a switch): no new branch, open or
-  select the session.
+- **Branch or worktree already exists** → reuse it: no new branch, open or select the
+  session. This path stashes, fetches and rebases each repo. `task switch` passes `--open`
+  to skip that and every other repo step (`references/status.md` → *`switch`*).
 
-## Mode question (MUST FOLLOW)
+## Mode (MUST FOLLOW)
 
 When `new` is about to create the worktree (`<root>/.worktrees/<branch>/` does not exist)
-and the arguments carry neither `--pair` nor `--single`, ask the user through `ask-user`
-before running the script: `Single` (no flag) or `Pair` (`--pair`). The first run records
+and the arguments carry neither `--pair` nor `--single`, do not ask. Take the mode of the
+most recently created worktree base under `<root>/.worktrees/` (`.pair/config.json` at
+its base = pair); no worktree → single. Pass the matching flag and name the mode in the
+start line; the user changes it with `task switch --pair|--single`. The first run records
 the mode — `.pair/config.json` at the base means pair, no `.pair/` means single — and
 every later open reuses it without asking (`switch`, `new <existing>`, a re-run after a
 closed session). `--single` is an explicit answer and never removes `.pair/`. Pair
@@ -40,7 +43,9 @@ is required (MUST FOLLOW):** the session opens in the background, and the user's
 moves to it. An existing session with that name is reused and is not selected either. The script then sets the title-bar context
 to the task id (`agtermctl session context <ID> --target <id>`) and flags it
 (`agtermctl session flag on --target <id>`), so the flagged view lists every live task
-(agterm 0.26.0+, best-effort). `cleanup-task.sh` mirrors this naming to close it.
+(agterm 0.26.0+, best-effort). It also tints the row with the project's color
+(`agtermctl session tint <color> --target <id>`, agterm 0.39+, best-effort; the project
+skill's `new-task.sh` names the color), and `pair.py respawn` carries the tint over. `cleanup-task.sh` mirrors this naming to close it.
 
 ## Autopilot
 
@@ -51,9 +56,9 @@ start screen. The launch line carries the stage (`SKILL.md` → *Stages*): Claud
 flags `pair.py claude-args` prints (`--session-id`/`--resume`, `--model`, `--effort`),
 OpenCode the agent `pair.py opencode-args` prints (`--agent planning` in PLAN, `--agent
 main` in IMPL). The project `new-task.sh` also answers `--print-command`, the writer
-start line that `pair.py stage` uses. Both resolve routine questions alone and ask the user only for
-destructive or irreversible actions, production impact, scope changes, and the plan and
-review approval gates.
+start line that `pair.py stage` uses. Both resolve routine questions alone and ask the
+user only at the three points of `SKILL.md` → *Autonomy*: the plan gate, the pre-PR diff
+gate, and a critical decision.
 
 ## Fresh from remote (new worktrees)
 

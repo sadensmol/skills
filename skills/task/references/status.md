@@ -1,7 +1,7 @@
 # `status` / `list` / `switch` — handled by the dispatcher
 
-`list` and `switch` work on the worktrees under the project root `$root` (SKILL.md →
-Step 2) and run from anywhere. `status` reports on the task this session is in, and
+`list` and `switch` work on the worktrees under the project root `$root` (`references/worktree-helpers.md` →
+*Project root*) and run from anywhere. `status` reports on the task this session is in, and
 uses `$root` for `--all`.
 
 ## `status`
@@ -12,13 +12,12 @@ blocking finish". `--all` → the fleet table at the end.
 `status` answers where this task is: its phase, what its PRs and CI do, and what still
 blocks `finish`. It is a read: it never commits, pushes, moves a ticket or opens a PR.
 
-**It renders into a floating agterm overlay, not into chat.** Outside agterm
-(`AGTERM_ENABLED` unset), print the same report in chat as a plain markdown table, no
-escapes.
+**It renders as an HTML page companion and a `.md` file, never into chat**
+(step 6).
 
 ### 1. Resolve the task
 
-Use `$WT`/`$branch` from SKILL.md → *Worktree helpers*. No worktree → say so and offer
+Use `$WT`/`$branch` from `references/worktree-helpers.md`. No worktree → say so and offer
 `--all`; never guess a task.
 
 ### 2. Show a passive panel while gathering
@@ -116,95 +115,93 @@ An empty list means `finish` would go through. Deferred review findings that sho
 become follow-up tickets are invisible to git and `gh`, so end with the question "any
 deferred review findings still to file as follow-ups?".
 
-### 6. Render — a floating, coloured, tabular overlay
+### 6. Render — a `.md` report plus an HTML page companion (MUST FOLLOW)
 
-Write the gathered facts to a small JSON file, then let the overlay run a renderer that
-reads its own terminal size (the panel width is unknown until it exists):
+The report is ALWAYS two files and ONE page companion — never a terminal renderer, never
+the report in chat. Write both under the session's scratch dir (`sadensmol-router` →
+scratch dir; inside a task, `$WT/.scratch/`):
+
+- **`task-status.md`** — the report itself, the file the user keeps: a title line (the
+  ticket id linked when you have its URL, then the branch), the state line, a repos
+  table (`repo | dirty | ahead | behind | PR | checks`), the blockers list, what runs
+  now, and the closing deferred-findings question.
+- **`task-status.html`** — the same content as a page, built from the same facts (never
+  a second, diverging gather).
+
+**Diagrams when they carry information** — a mermaid block in the `.md` (and the same
+diagram in the page) only when there is a structure to show:
+
+| Show | When |
+|---|---|
+| `flowchart LR` of the PR chain, each node `repo #N state` | stacked PRs, or a merge order across repos |
+| `flowchart LR` of the phases, the current one highlighted | the state is not obvious from one line (two states had evidence) |
+
+One repo with one PR, or no PRs → no diagram. Validate every block with
+`references/mermaid.md` before you open the page.
+
+**The page:**
+
+- Self-contained HTML: inline CSS, `<table>`s, the state word bold and coloured; ticket
+  id, PR numbers and a blocker naming one of them are `<a href>` links; nothing else is
+  a link. Escape every value that came from git, `gh` or the tracker.
+- Colours from the plannotator theme (`references/plannotator.md` → *Theme*): background,
+  text and borders from its palette (`--bg`, `--fg`, `--line`); red = `--partial`, yellow =
+  `--mark`, plus a fixed green and cyan that read well on that background. No ANSI or
+  `--agterm-*` slots. green = done / green checks / in sync; red = blocked, failing job,
+  `CHANGES_REQUESTED`, `CONFLICTING`; yellow = code review, pending, draft; cyan =
+  testing, a live command. Never encode a state in colour alone — print the word.
+- Mermaid renders in the page from the LOCAL bundle, never a CDN: copy it next to the page
+  and load it relatively:
+
+  ```bash
+  mjs="$(npm root -g 2>/dev/null)/@mermaid-js/mermaid-cli/node_modules/mermaid/dist/mermaid.min.js"
+  [ -f "$mjs" ] && cp "$mjs" "$WT/.scratch/mermaid.min.js"
+  ```
+
+  `<pre class="mermaid">…</pre>` plus `<script src="mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true, theme:"dark"})</script>`.
+  No bundle → leave the diagram out of the page and say so in the chat line (the `.md`
+  keeps it).
+
+**Open it — the page is the deliverable:**
 
 ```bash
-agtermctl session overlay open \
-  "zsh -lc 'python3 \"$render\" \"$data\" | less -R'" \
-  --target "$AGTERM_SESSION_ID" --size-percent 75 --background-color "#11131a"
+agtermctl session overlay open --html "$WT/.scratch/task-status.html" --companion --cwd "$WT/.scratch" --js \
+  --target "$AGTERM_SESSION_ID" --socket "$AGTERM_SOCKET"
 ```
 
-- `--size-percent 75`, never full-pane, no `surface zoom`, no `--full`: a full-pane
-  overlay looks like output printed into the session.
-- `--target "$AGTERM_SESSION_ID"` is required: the default is whatever session the
-  user has selected. `zsh -lc` is there because `overlay open` runs with the GUI `PATH`.
-  `less -R` passes escapes through, gives search and scroll, and quitting closes it.
-- **Then say ONE line in chat, never the report again:** "Status is up in the overlay
-  (`q` to dismiss) — implementation, 3 repos dirty, no PRs yet." Answer a follow-up
-  about one row with that row only.
+- `--target "$AGTERM_SESSION_ID"` is required (the default is whatever session the user
+  selected). `--cwd` lets the page load `mermaid.min.js`; `--js` runs it. No `--follow`
+  (*Never move the user's focus*). Save the printed id in `$WT/.scratch/task-status.page`.
+- A status page from this task is still open (the saved id is in `tree --json`) →
+  `session overlay reload --target <saved id>`, never a second page.
+- Outside agterm (`AGTERM_ENABLED` unset) → `open "$WT/.scratch/task-status.html"`.
+- **Then say ONE line in chat, never the report again and never a file path:** "Status
+  is up in the companion page — implementation, 3 repos dirty, no PRs yet." Answer a follow-up about one row with that row only.
 
-Renderer rules (python3 stdlib + SGR escapes; never depend on `gum`, `glow`, `bat`,
-`rich`):
+The `.md` for the example task:
 
-- **Width.** Piping into `less` makes `shutil.get_terminal_size()` fall back to 80, so
-  read the tty:
+```markdown
+# [ABC-123](<tracker url>) · be-add-health-checks
 
-  ```python
-  def term_cols(default=100):
-      for fd in (sys.stdout.fileno(), sys.stderr.fileno()):
-          try:    return os.get_terminal_size(fd).columns
-          except OSError: pass
-      try:
-          fd = os.open("/dev/tty", os.O_RDONLY)
-          try:    return os.get_terminal_size(fd).columns
-          finally: os.close(fd)
-      except OSError: return default
-  ```
+**state:** code review — PR #1501 open, no review yet
 
-  `WIDTH = max(48, cols - 4)`. Every rule spans it, and the name column absorbs the
-  slack (`flex = WIDTH - (fixed columns + gaps)`). Truncate only against the real
-  width — an ellipsis next to blank columns means you truncated to a guess.
-- **Links: OSC 8, not bare URLs.** Link the ticket id, each PR cell, and a blocker line
-  that names one of them — nothing else. The terminator is ESC + ONE backslash:
+| repo      | dirty | ahead | behind | PR                 | checks      |
+|-----------|------:|------:|-------:|--------------------|-------------|
+| api       |     3 |     2 |      0 | [#1501](<pr url>)  | 2✓ 1✗ lint  |
+| e2e-tests |     0 |     1 |      0 | —                  | —           |
 
-  ```python
-  def link(url, label):
-      return label if not url else "\033]8;;" + url + "\033\\" + label + "\033]8;;\033\\"
-  OSC8 = re.compile("\033\\]8;;[^\033]*\033\\\\")
-  def w(s): return len(SGR.sub("", OSC8.sub("", s)))   # measure without SGR and OSC 8
-  ```
+## Blockers
+- ✗ api: 3 uncommitted files
+- ✗ api: PR [#1501](<pr url>) check `lint` failing
+- ✗ e2e-tests: 1 commit on this branch and no PR
 
-  `clip()` must strip both before slicing too.
-- **No outer box** — agterm frames the panel. A bold title line, a dim rule, then
-  sections.
-- **Colour: the 16 ANSI colours** (they follow the user's theme); truecolor only as an
-  accent; no colour when the stream is not a TTY. green = done / green checks / in sync;
-  red = blocked, failing job, `CHANGES_REQUESTED`, `CONFLICTING`; yellow = code review,
-  pending, draft; cyan = testing, a live foreground command; default + bold state word =
-  implementation, planning; dim = repo and branch names, PR urls. Never encode a state
-  in colour alone — print the word.
-- **Three sections, plain columns, one rule each.** Compute every column width from the
-  content (`max(len(header), max(len(cell)))`), never a hardcoded field width. One
-  width for the whole board, rules included. Number columns hold digits only
-  (annotations go beside the name, dim). Pad by display width (strip escapes first, or
-  colour after padding; keep the glyph set narrow or measure with
-  `unicodedata.east_asian_width`). Right-align numbers, left-align names.
-  Truncate, never wrap. No `gh` → `—` in the `pr`/`checks` columns.
-
-```
-  ABC-123 · be-add-health-checks
-  ────────────────────────────────────────────────────────────────────
-  state   code review — PR #1501 open, no review yet
-
-  repo              dirty  ahead  behind   pr      checks
-  ────────────────────────────────────────────────────────────────────
-  api                   3      2       0   #1501   2✓ 1✗ lint
-  e2e-tests             0      1       0   —       —
-
-  blockers
-  ────────────────────────────────────────────────────────────────────
-  ✗  api: 3 uncommitted files
-  ✗  api: PR #1501 check `lint` failing
-  ✗  e2e-tests: 1 commit on this branch and no PR
-  ?  deferred review findings still to file as follow-ups?
+Any deferred review findings still to file as follow-ups?
 ```
 
 ### `status --all`
 
-One row per worktree under `$root/.worktrees/`, most recently modified first, in chat:
+One row per worktree under `$root/.worktrees/`, most recently modified first, rendered
+like step 6 (`task-status-all.md` + `task-status-all.html` in the scratch dir, one page companion):
 
 ```
 branch                          session              git
@@ -234,12 +231,34 @@ A numbered list of bare names; none → "No worktrees found." State questions ar
 **Triggers:** "task switch", "switch task", "task switch --pair", "task switch
 --single", "switch to <task> in pair mode".
 
-1. List worktrees as in `list`. None → "No worktrees found." and stop.
-2. Offer them through `ask-user` (max 4 — the 4 most recently modified, plus "Other").
-   Without `ask-user`, a numbered list in chat. Never pick silently.
-3. Delegate the open to the project skill so its wiring runs (dep refresh, session
-   naming): args `new <branch>`, `new <branch> --pair` or `new <branch> --single`. Every
-   project's `new` treats an existing branch as a switch, so `new <existing>` IS the open.
-   Never run a project's `new-task.sh` from here.
-4. **Plain `switch` resumes in the recorded mode (MUST FOLLOW).** Do not ask single or
-   pair, and add no mode flag. Use `--pair`/`--single` only when the user asks for it.
+**It works on worktrees (MUST FOLLOW).** The choice is an existing worktree. A live session
+is never a condition: after a reboot or a closed session there is none, and `switch` opens
+it. Never delegate to `new`: on an existing worktree `new` stashes, fetches and rebases every
+repo. Do not create worktrees. Do not run Git commands, take snapshots, fetch, pull, rebase,
+stash, refresh dependencies or inspect task status.
+
+1. Resolve `$root` through `references/worktree-helpers.md` and list its existing worktrees.
+   None → "No worktrees found." and stop.
+2. Use the worktree the user names when it matches exactly one existing directory.
+   Otherwise offer the four most recently modified through `ask-user`, with custom input
+   for another worktree. Without `ask-user`, show a numbered list. Never pick silently.
+3. Outside agterm, use the selected worktree as the working directory for subsequent
+   commands and stop.
+4. Read `agtermctl tree --json` and locate the task session by its `cwd` under the selected
+   worktree. Use path boundaries, not a bare name prefix; exclude test, console, and review
+   companion sessions (every node with a `parent` field). Ask only if several task sessions match.
+5. No matching session, or `--pair` / `--single` given → run the project's script, which
+   opens or converts the session and leaves every repo as it is. It keeps the mode the
+   worktree recorded:
+
+   ```bash
+   bash <project-skill-dir>/scripts/new-task.sh <branch> --open [--pair | --single]
+   ```
+
+   Then read `agtermctl tree --json` again for the session id.
+6. Select the session with `agtermctl session select --target <session-id>`. Pass
+   `--socket "$AGTERM_SOCKET"` when set. This explicit switch request permits moving the
+   user's focus. Confirm the selected session through `tree --json`, then stop.
+
+**Mode.** Plain `switch` asks no single/pair question and changes no mode or stage record.
+`--pair` / `--single` follow `references/pair-mode.md` → *Changing a task's mode*.

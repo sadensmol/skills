@@ -22,8 +22,16 @@ commands:
 - `tests=green` — local tests, CI/CD checks, e2e and regression runs, where they apply.
 - `problems=none` or `problems=tracked` — every bug found is fixed or has a new tracker
   task; record each key/link (comments in the checklist).
+- `docs=updated` or `docs=none` — the docs step ran after the last code change and
+  before the merge (`references/finish.md` → §6a): every affected doc is updated and
+  merged, or nothing needed a change.
 - `ticket_updates=confirmed` — the task's issue and every follow-up reflect the final
   scope and outcome.
+- `tracker_state=verified` — the task's issue was re-read **now**, after every merge. Its
+  state and assignee match the project tracker flow for a merged task. A merge automation
+  can change them after `finish`, so a value that `finish` reported is not proof. Any
+  drift is set back per that flow and read back. When the flow does not decide the case,
+  ask the user. The project hook names the flow.
 - `infra=clean` — every session branch and infra console closed; no task-owned Docker
   containers, networks or volumes; no `.infra.lock` holding a stack that is still up.
 

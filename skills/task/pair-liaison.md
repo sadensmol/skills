@@ -77,12 +77,16 @@ touches. A better idea of the reviewer must still win.
      with evidence as a new `MERGE:`. After two `COUNTER:`s, close as `disputed`.
    - Anything else: send `QUESTION:` and ask the reviewer to restate it with one of
      `VIEW:`, `AGREE:`, `COUNTER:` or `QUESTION:`.
-4. **Close the thread** with the decision: what, which files and symbols. For a user
+4. **Close the thread** with the decision: `decided:` (what), `done:` (the state now,
+   usually `not done yet: <who applies it>`), `where:` (files and symbols). For a user
    question, the joint answer. For `disputed`, both positions in one line each.
 
        <py> thread close --base <base> --id <id> --status agreed --stdin <<'MSG'
        …
        MSG
+
+   Exit 8 means a reviewer reply arrived that you have not read: run `thread wait`,
+   handle it by kind (step 3), then close again.
 
 ## Return — exactly this, nothing else
 
@@ -90,7 +94,10 @@ touches. A better idea of the reviewer must still win.
     status: agreed | disputed | needs_writer | busy | blocked | unresponsive
     decision: <at most 10 lines: what, files and symbols; or the joint answer>
     writer: <one line>      (disputed only)
-    reviewer: <one line>    (disputed only)
+    reviewer: <one line>    (disputed; for a user question, the reviewer's own answer)
     question: <one line>    (needs_writer only)
+
+For a user question, `reviewer:` is the answer of the reviewer's `VIEW:`, for the writer's
+Q&A log entry (`SKILL.md` → *Q&A log*).
 
 No transcript, no message log, no summary of the exchange: the thread files keep it.

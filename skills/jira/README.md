@@ -37,6 +37,9 @@ HTTP Basic auth (`email:API-token`). That's the whole mechanism.
 
 - `SKILL.md` — the skill: backend check, quick reference, workflow, safety
   rules, first-time setup.
+- `references/setup.md` — the full first-time setup instruction.
+- `references/follow-up-tickets.md` — the steps for a ticket created from work on
+  another ticket.
 - `references/rest.md` — full curl recipes (view, JQL search, create,
   transition, comment, assign), API v2-vs-v3 notes, error handling, and the
   Jira Server/DC Bearer-auth variant.

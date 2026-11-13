@@ -124,162 +124,6 @@ kubectl exec -it <pod-name> -n <namespace> -- /bin/sh
 kubectl exec <pod-name> -n <namespace> -- cat /etc/resolv.conf
 ```
 
-## Deployments, ReplicaSets, StatefulSets
-
-```bash
-# deployment status and strategy
-kubectl get deployments -n <namespace> -o wide
-kubectl describe deployment <name> -n <namespace>
-
-# rollout status and history
-kubectl rollout status deployment/<name> -n <namespace>
-kubectl rollout history deployment/<name> -n <namespace>
-
-# replicasets (useful for debugging failed rollouts)
-kubectl get rs -n <namespace>
-
-# statefulsets
-kubectl get statefulsets -n <namespace>
-kubectl describe statefulset <name> -n <namespace>
-
-# daemonsets
-kubectl get daemonsets -A
-```
-
-## Network Architecture & Service Discovery
-
-### Services
-
-```bash
-# all services with type, cluster IP, external IP, ports
-kubectl get svc -n <namespace> -o wide
-kubectl get svc -A -o wide
-
-# service details (endpoints, selectors, ports)
-kubectl describe svc <service-name> -n <namespace>
-
-# service endpoints (which pods back a service)
-kubectl get endpoints <service-name> -n <namespace>
-kubectl get endpointslices -n <namespace>
-
-# verify selector matches running pods
-kubectl get pods -l <key>=<value> -n <namespace>
-```
-
-### DNS & Internal Resolution
-
-```bash
-# check DNS from inside a pod
-kubectl exec -it <pod-name> -n <namespace> -- nslookup <service-name>
-kubectl exec -it <pod-name> -n <namespace> -- nslookup <service-name>.<namespace>.svc.cluster.local
-
-# check CoreDNS pods
-kubectl get pods -n kube-system -l k8s-app=kube-dns
-kubectl logs -n kube-system -l k8s-app=kube-dns
-
-# DNS config inside pod
-kubectl exec <pod-name> -n <namespace> -- cat /etc/resolv.conf
-```
-
-### Connectivity Testing
-
-```bash
-# test TCP connectivity between pods
-kubectl exec -it <source-pod> -n <namespace> -- nc -zv <target-service> <port>
-kubectl exec -it <source-pod> -n <namespace> -- wget -qO- --timeout=5 http://<target-service>:<port>/health
-
-# curl from inside a pod
-kubectl exec -it <pod-name> -n <namespace> -- curl -s http://<service-name>:<port>/endpoint
-
-# if curl/wget not available, use a debug pod
-kubectl run debug --rm -it --image=nicolaka/netshoot -- /bin/bash
-```
-
-### Ingress & Egress
-
-```bash
-# ingress resources
-kubectl get ingress -A
-kubectl describe ingress <name> -n <namespace>
-
-# ingress controller pods and logs
-kubectl get pods -A | grep ingress
-kubectl logs -n <ingress-namespace> <ingress-controller-pod>
-
-# network policies (firewall rules between pods)
-kubectl get networkpolicies -n <namespace>
-kubectl describe networkpolicy <name> -n <namespace>
-
-# check if network policies are blocking traffic
-kubectl get networkpolicies -A -o yaml
-```
-
-### Service Mesh (Istio)
-
-```bash
-# istio sidecar status
-kubectl get pods -n <namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.name}{","}{end}{"\n"}{end}'
-
-# virtual services and destination rules
-kubectl get virtualservices -n <namespace>
-kubectl get destinationrules -n <namespace>
-kubectl describe virtualservice <name> -n <namespace>
-
-# istio proxy config for a pod
-istioctl proxy-config routes <pod-name> -n <namespace>
-istioctl proxy-config clusters <pod-name> -n <namespace>
-istioctl proxy-config listeners <pod-name> -n <namespace>
-
-# check envoy sidecar logs
-kubectl logs <pod-name> -c istio-proxy -n <namespace>
-```
-
-## ConfigMaps & Secrets
-
-```bash
-# list
-kubectl get configmaps -n <namespace>
-kubectl get secrets -n <namespace>
-
-# view configmap data
-kubectl describe configmap <name> -n <namespace>
-kubectl get configmap <name> -n <namespace> -o yaml
-
-# view secret (base64 encoded)
-kubectl get secret <name> -n <namespace> -o yaml
-
-# decode a secret value
-kubectl get secret <name> -n <namespace> -o jsonpath='{.data.<key>}' | base64 -d
-```
-
-## Resource Inspection with JSONPath & Custom Columns
-
-```bash
-# pod IPs
-kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.podIP}{"\n"}{end}' -n <namespace>
-
-# container images per pod
-kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{","}{end}{"\n"}{end}' -n <namespace>
-
-# custom columns
-kubectl get pods -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,IP:.status.podIP,NODE:.spec.nodeName' -n <namespace>
-
-# all environment variables for a pod
-kubectl get pod <pod-name> -n <namespace> -o jsonpath='{range .spec.containers[*].env[*]}{.name}={.value}{"\n"}{end}'
-```
-
-## Persistent Storage
-
-```bash
-# persistent volumes and claims
-kubectl get pv
-kubectl get pvc -n <namespace>
-kubectl describe pvc <name> -n <namespace>
-
-# storage classes
-kubectl get storageclasses
-```
-
 ## Diagnostic Workflow
 
 When debugging an issue, follow this sequence:
@@ -293,3 +137,15 @@ When debugging an issue, follow this sequence:
 7. **Check network policies** — `kubectl get networkpolicies -n <ns>` for blocked traffic
 
 For detailed reference on specific topics, see `references/advanced-diagnostics.md`.
+
+## Read on demand
+
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
+
+| When | Read |
+|---|---|
+| You inspect services/endpoints, debug DNS, test connectivity, or check ingress/egress, network policies or Istio | `references/networking.md` |
+| You inspect deployments, rollouts, ReplicaSets, StatefulSets or DaemonSets | `references/workloads-config.md` |
+| You read ConfigMaps or Secrets, extract fields with JSONPath / custom columns, or check PV / PVC / storage classes | `references/workloads-config.md` |
+| You debug nodes, port-forward, RBAC, Jobs/CronJobs, HPA, TLS certificates, control-plane health or config drift | `references/advanced-diagnostics.md` |

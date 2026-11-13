@@ -472,7 +472,7 @@ class UserPromptHookTests(PairTestCase):
                       r.stdout)
         self.assertIn("liaison", r.stdout)
         self.assertNotIn("{", r.stdout)
-        self.assertLess(len(r.stdout), 600)
+        self.assertLess(len(r.stdout), 650)
 
     def test_reminder_without_threads_keeps_the_view_rule_and_is_short(self):
         stub = StubOpencode()
@@ -481,9 +481,9 @@ class UserPromptHookTests(PairTestCase):
         (base / ".pair" / "waiter-reviewer.pid").write_text(f"{os.getpid()}\n")
         r = self.hook(base, "reviewer", "is this right?")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("VIEW: user asked:", r.stdout)
+        self.assertIn("DECISION: user asked:", r.stdout)
         self.assertIn("FYI: running", r.stdout)
-        self.assertLess(len(r.stdout), 600)
+        self.assertLess(len(r.stdout), 650)
 
     def test_reviewer_prompt_is_queued_for_the_claude_writer(self):
         base = make_base(self.base_dir, writer="claude")
@@ -491,8 +491,8 @@ class UserPromptHookTests(PairTestCase):
         r = self.hook(base, "reviewer", "is this right?")
         self.assertEqual(r.returncode, 0, r.stderr)
         r = self.run_pair("wait", "--base", str(base), "--role", "writer", "--timeout", "5")
-        self.assertIn("The user said to the reviewer (never send an ack: a VIEW: or a STOP: "
-                      "only): is this right?", r.stdout)
+        self.assertIn("The user said to the reviewer (context only, never send an ack: a "
+                      "STOP: only when its answer or change is wrong): is this right?", r.stdout)
 
     def test_long_prompt_goes_through_a_file(self):
         base = make_base(self.base_dir, writer="claude")
@@ -517,6 +517,27 @@ class UserPromptHookTests(PairTestCase):
         self.assertNotIn("hunter2secret", text)
         self.assertIn("this is a token for production: [REDACTED]", text)
         self.assertIn(f"a/b/{token}x", text)  # paths stay readable
+
+    def test_uuid_keys_pasted_under_a_key_label_are_redacted(self):
+        key = "11111111-2222-3333-4444-555555555555"  # pragma: allowlist secret
+        for prompt in (f"this is prod api key:\n{key}", f"prod key: {key}",
+                       f"these are the keys:\n{key}\n{key}", "api key abcdef123456"):
+            with self.subTest(prompt=prompt):
+                base = make_base(self.base_dir / str(abs(hash(prompt))), writer="claude")
+                (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
+                self.assertEqual(self.hook(base, "reviewer", prompt).returncode, 0)
+                [msg] = list((base / ".pair/inbox/writer").glob("*.md"))
+                text = msg.read_text()
+                self.assertNotIn(key, text)
+                self.assertNotIn("abcdef123456", text)
+
+    def test_uuid_without_a_key_label_stays_readable(self):
+        base = make_base(self.base_dir, writer="claude")
+        (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
+        cid = "11111111-2222-3333-4444-555555555555"
+        self.assertEqual(self.hook(base, "reviewer", f"check cid: {cid}").returncode, 0)
+        [msg] = list((base / ".pair/inbox/writer").glob("*.md"))
+        self.assertIn(cid, msg.read_text())
 
     def test_failure_never_blocks_the_prompt_and_says_so(self):
         r = self.hook(self.base_dir, "writer", "hello")
@@ -703,6 +724,25 @@ class WaiterGuardTests(PairTestCase):
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         self.assertTrue((base / ".pair" / "idle-writer").exists())
 
+    def test_the_first_prompt_of_a_fresh_restart_stays_with_the_agent(self):
+        sys.path.insert(0, str(HERE))
+        import pair
+        stub = StubOpencode()
+        self.addCleanup(stub.close)
+        base = make_base(self.base_dir, writer="claude", port=stub.port)
+        (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
+        prompt = pair.FRESH_PROMPTS["impl"].format(decisions=".pair/decisions.md", stage="IMPL")
+        r = self.run_pair("user-prompt", "--base", str(base), "--role", "writer",
+                          stdin=json.dumps({"prompt": prompt, "session_id": WRITER_ID}))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(stub.prompts(), [])
+        self.assertEqual(list((base / ".pair" / "inbox" / "reviewer").glob("*.md")), [])
+        self.assertNotIn("PAIR MODE", r.stdout)
+        self.assertIn("TASK STAGE:", r.stdout)
+        # the new conversation is still recorded: a later `stage` resumes it
+        cfg = json.loads((base / ".pair" / "config.json").read_text())
+        self.assertEqual(cfg["claude_session"]["writer"], WRITER_ID)
+
     def test_starting_a_wait_ends_idle(self):
         base = make_base(self.base_dir, writer="claude")
         self.idle(base)
@@ -814,9 +854,9 @@ class InitBriefTests(PairTestCase):
         self.assertIn(f"wait --follow --base {base} --role writer", writer)
         self.assertIn("Monitor", writer)
         self.assertIn("READ-ONLY", reviewer)
-        self.assertIn("Every opinion question of the user", writer)
+        self.assertIn("A hard opinion question", writer)
         self.assertIn("liaison", writer)
-        self.assertIn("send the writer VIEW: user asked", reviewer)
+        self.assertIn("send the writer DECISION: user asked", reviewer)
         self.assertNotIn(" wait --base", reviewer)
 
     def test_brief_then_and_reopen_make_a_first_prompt(self):
@@ -1034,16 +1074,35 @@ class ExistingSessionTests(PairTestCase):
                              "--cwd", str(self.base_dir), "--command", "zsh -lc 'claude --continue'")
 
     def test_respawn_creates_after_the_old_session_then_closes_it(self):
+        self.tree_with()
         r = self.respawn("SOMEONE-ELSE")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "11111111-2222-3333-4444-555555555555")
         argvs = [c["argv"] for c in self.agterm_calls()]
-        self.assertEqual(argvs[0], ["session", "new", "--cwd", str(self.base_dir), "--name", "T-1 thing",
-                                    "--after", "OLD-1", "--no-select", "--command",
-                                    "zsh -lc 'claude --continue'"])
+        self.assertIn(["session", "new", "--cwd", str(self.base_dir), "--name", "T-1 thing",
+                       "--after", "OLD-1", "--no-select", "--command",
+                       "zsh -lc 'claude --continue'"], argvs)
         self.assertIn(["session", "close", "--target", "OLD-1"], argvs)
+        self.assertFalse([a for a in argvs if a[:2] == ["session", "tint"]])
+
+    def test_respawn_is_refused_while_a_companion_is_open(self):
+        self.tree.write_text(json.dumps({"result": {"tree": {"workspaces": [{"sessions": [
+            {"id": "OLD-1"}, {"id": "C-1", "name": "test core T-1", "parent": "OLD-1"}]}]}}}))
+        r = self.respawn("SOMEONE-ELSE")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("test core T-1", r.stderr)
+        argvs = [c["argv"] for c in self.agterm_calls()]
+        self.assertFalse([a for a in argvs if a[:2] in (["session", "new"], ["session", "close"])])
+
+    def test_respawn_keeps_the_old_session_tint(self):
+        self.tree_with(tint="purple", tintOn=["icon"])
+        r = self.respawn("SOMEONE-ELSE")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        argvs = [c["argv"] for c in self.agterm_calls()]
+        self.assertIn(["session", "tint", "purple", "--target", "11111111-2222-3333-4444-555555555555"], argvs)
 
     def test_respawn_from_inside_the_old_session_closes_it_later(self):
+        self.tree_with()
         r = self.respawn("OLD-1")
         self.assertEqual(r.returncode, 0, r.stderr)
         argvs = [c["argv"] for c in self.agterm_calls()]
@@ -1223,6 +1282,32 @@ class ThreadTests(PairTestCase):
         self.assertEqual(len(out), 2)
         self.assertTrue(out[0].startswith("t1") and "agreed" in out[0] and "retry" in out[0])
         self.assertTrue(out[1].startswith("t2") and "open" in out[1] and "b.go" in out[1])
+
+    def test_close_is_refused_with_exit_8_while_a_reviewer_reply_is_unread(self):
+        self.open_thread()
+        self.assertEqual(self.reply("t1", "ANSWER: one more point").returncode, 0)
+        r = self.run_pair("thread", "close", "--base", str(self.base), "--id", "t1", "--status",
+                          "agreed", "--stdin", stdin="Retry 3 times.")
+        self.assertEqual(r.returncode, 8)
+        self.assertIn("thread wait", r.stderr)
+        self.assertEqual(self.meta("t1")["status"], "open")
+        self.assertFalse((self.base / ".pair/threads/t1/decision.md").exists())
+        r = self.run_pair("thread", "wait", "--base", str(self.base), "--id", "t1", "--timeout", "5")
+        self.assertIn("ANSWER: one more point", r.stdout)
+        r = self.run_pair("thread", "close", "--base", str(self.base), "--id", "t1", "--status",
+                          "agreed", "--stdin", stdin="Retry 3 times.")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.meta("t1")["status"], "agreed")
+
+    def test_a_thread_message_releases_the_main_reviewers_held_fyis_to_the_writer(self):
+        r = self.run_pair("send", "--base", str(self.base), "--to", "writer", "--stdin",
+                          stdin="FYI: ready for the plan discussion")
+        self.assertTrue(json.loads(r.stdout)["held"])
+        self.open_thread()
+        self.assertEqual(self.reply("t1", "VIEW: retry in the caller").returncode, 0)
+        self.assertEqual(list((self.base / ".pair/held/writer").glob("*.md")), [])
+        r = self.run_pair("wait", "--base", str(self.base), "--role", "writer", "--timeout", "5")
+        self.assertIn("Chat from reviewer: FYI: ready for the plan discussion", r.stdout)
 
     def test_reply_to_the_writer_needs_the_thread_key(self):
         self.open_thread()
@@ -1647,6 +1732,7 @@ fi
 
 WRITER_ID = "aaaaaaaa-0000-4000-8000-000000000001"
 REVIEWER_ID = "bbbbbbbb-0000-4000-8000-000000000002"
+OTHER_ID = "cccccccc-0000-4000-8000-000000000003"
 NEW_SID = "11111111-2222-3333-4444-555555555555"
 
 
@@ -1770,7 +1856,7 @@ class StageTests(PairTestCase):
         r = self.run_pair("user-prompt", "--base", str(base), "--role", "writer", stdin=hook)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("so it is PLAN now", r.stdout)
-        self.assertIn(f"stage --base {base.resolve()} impl", r.stdout)
+        self.assertIn(f"fresh --base {base.resolve()} --then impl", r.stdout)
         self.assertIn("explicitly approved PLAN.md", r.stdout)
         cfg = self.cfg()
         self.assertEqual((cfg["stage"], cfg["claude_session"]), ("plan", {"writer": WRITER_ID}))
@@ -1824,7 +1910,7 @@ class StageTests(PairTestCase):
         sid = self.cfg()["claude_session"]["writer"]
         self.assertEqual(r.stdout.strip(), f"--session-id {sid} --model claude-opus-5-5 --effort high")
         r = self.run_pair("claude-args", "--base", str(self.base_dir), "--single")
-        self.assertIn("--model claude-opus-5-5 --effort xhigh", r.stdout)
+        self.assertIn("--model claude-opus-5-5 --effort high", r.stdout)
         self.assertNotEqual(self.single()["claude_session"], sid)
 
     def test_opencode_args_name_the_stage_agent_and_the_recorded_session(self):
@@ -1855,6 +1941,26 @@ class StageTests(PairTestCase):
         self.assertIn("t1 is open", r.stderr)
         self.assertEqual(self.cfg()["stage"], "plan")
         self.assertEqual(self.agterm_calls(), [])
+
+    def assert_refused_for_a_companion(self, base, result):
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertIn("test core ABC-1", result.stderr)
+        self.assertEqual(self.cfg()["stage"], "plan")
+        self.assertNotIn("fresh", self.cfg())
+        argvs = [c["argv"] for c in self.agterm_calls()]
+        self.assertFalse([a for a in argvs if a[:2] in (["session", "new"], ["session", "close"])])
+
+    def test_stage_is_refused_while_a_companion_is_open(self):
+        base = self.pair_base("plan")
+        self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]},
+                      {"id": "C-1", "name": "test core ABC-1", "parent": "OLD-1"})
+        self.assert_refused_for_a_companion(base, self.stage(base, "impl"))
+
+    def test_fresh_is_refused_while_a_companion_is_open(self):
+        base = self.pair_base("plan")
+        self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]},
+                      {"id": "C-1", "name": "test core ABC-1", "parent": "OLD-1"})
+        self.assert_refused_for_a_companion(base, self.fresh(base))
 
     def test_stage_without_a_launcher_is_refused(self):
         base = self.pair_base("plan")
@@ -1892,8 +1998,8 @@ class StageTests(PairTestCase):
                          (NEW_SID, "ses_reviewer"))
 
     def test_the_stage_agent_reaches_main_prompts_thread_children_and_flushes(self):
-        base = self.pair_base("impl")
-        self.assertEqual(self.stage(base, "plan").returncode, 0)
+        base = self.pair_base("plan")
+        self.assertEqual(self.stage(base, "impl").returncode, 0)
         self.assertEqual(self.cfg()["roles"]["reviewer"]["agent"], "review")
         (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
         r = self.run_pair("send", "--base", str(base), "--to", "reviewer", "--stdin",
@@ -1909,13 +2015,13 @@ class StageTests(PairTestCase):
         self.assertEqual(len(self.stub.prompts()), 2)
 
     def test_pair_stage_with_an_opencode_writer_resumes_both_on_the_stage(self):
-        base = self.pair_base("impl", writer="opencode")
-        r = self.stage(base, "plan")
+        base = self.pair_base("plan", writer="opencode")
+        r = self.stage(base, "impl")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.new_commands(), [
-            "zsh -lc 'opencode --auto --agent planning --session ses_writer'"])
+            "zsh -lc 'opencode --auto --agent main --session ses_writer'"])
         start = (base / ".pair/reviewer-start.sh").read_text()
-        self.assertIn(f"--resume {REVIEWER_ID} --model claude-opus-5-5 --effort xhigh ", start)
+        self.assertIn(f"--resume {REVIEWER_ID} --model claude-opus-5-5 --effort high ", start)
         self.assertNotIn("agent", self.cfg()["roles"]["reviewer"])
 
     def test_stage_needs_the_conversation_of_a_claude_writer(self):
@@ -1930,20 +2036,19 @@ class StageTests(PairTestCase):
         self.assertEqual(self.stage(base, "impl").returncode, 0)
         self.assertEqual(self.cfg()["claude_session"]["writer"], WRITER_ID)
 
-    def test_single_stage_respawns_only_the_writer_and_round_trips(self):
+    def test_single_stage_respawns_only_the_writer(self):
         (self.base_dir / ".task-stage").write_text(json.dumps({
             "stage": "plan", "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
         self.env["AGTERM_SESSION_ID"] = "OLD-1"
         self.env["CLAUDE_CODE_SESSION_ID"] = WRITER_ID
         self.transcript(WRITER_ID)
         self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]})
-        for stage, effort in (("impl", "high"), ("plan", "xhigh")):
-            r = self.stage(self.base_dir, stage)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(self.single()["stage"], stage)
-            self.assertEqual(self.new_commands()[-1],
-                             "zsh -lc 'claude --dangerously-skip-permissions "
-                             f"--resume {WRITER_ID} --model claude-opus-5-5 --effort {effort}'")
+        r = self.stage(self.base_dir, "impl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.single()["stage"], "impl")
+        self.assertEqual(self.new_commands()[-1],
+                         "zsh -lc 'claude --dangerously-skip-permissions "
+                         f"--resume {WRITER_ID} --model claude-opus-5-5 --effort high'")
         self.assertFalse(any(c["argv"][:2] == ["session", "split"] for c in self.agterm_calls()))
         self.assertFalse((self.base_dir / ".pair").exists())
 
@@ -1966,31 +2071,120 @@ class StageTests(PairTestCase):
         self.assertIn(["session", "close", "--target", "OLD-1"],
                       [c["argv"] for c in self.agterm_calls()])
 
-    def test_fresh_is_only_for_the_plan_stage(self):
+    def fresh(self, base, *extra):
+        return self.run_pair("fresh", "--base", str(base), "--foreground",
+                             "--wait-seconds", "2", *extra)
+
+    def test_entries_held_when_the_plan_closes_go_to_the_impl_logs(self):
+        (self.base_dir / ".task-stage").write_text(json.dumps({
+            "stage": "plan", "claude_session": WRITER_ID,
+            "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.env["CLAUDE_CODE_SESSION_ID"] = WRITER_ID
+        self.transcript(WRITER_ID)
+        self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]})
+        (self.base_dir / ".scratch").mkdir()
+        (self.base_dir / ".scratch/plan-log-pending.json").write_text(json.dumps([
+            {"kind": "qa", "entry": "### Q1 — retry\n\nheld question", "mirror": False},
+            {"kind": "decision", "entry": "### main: cache\n\nmirrored", "mirror": True},
+            {"kind": "decision", "entry": "### D1 — cache\n\nsingle", "mirror": False}]))
+        r = self.fresh(self.base_dir, "--then", "impl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.base_dir / ".task-qa.md").read_text(),
+                         "### Q1 — retry\n\nheld question\n\n")
+        self.assertEqual((self.base_dir / ".task-decisions.md").read_text(),
+                         "### D1 — cache\n\nsingle\n\n")
+        self.assertFalse((self.base_dir / ".scratch/plan-log-pending.json").exists())
+        self.assertFalse((self.base_dir / "PLAN.md").exists())
+
+    def fake_opencode(self):
+        """An `opencode session list` that knows a newer session of the base."""
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        tool = bin_dir / "opencode"
+        tool.write_text("#!/bin/sh\necho '[{\"id\": \"ses_latest\", \"directory\": \"'"
+                        "\"$FAKE_BASE\"'\", \"updated\": 1}]'\n")
+        tool.chmod(tool.stat().st_mode | stat.S_IEXEC)
+        self.env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+    def test_stage_no_longer_takes_fresh(self):
         base = self.pair_base("plan")
-        r = self.stage(base, "impl", "--fresh")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("stage plan", r.stderr)
+        self.assertEqual(self.stage(base, "plan", "--fresh").returncode, 2)
         self.assertEqual(self.agterm_calls(), [])
 
-    def test_fresh_plan_restarts_both_agents_in_new_conversations(self):
+    def test_fresh_restarts_both_agents_in_new_conversations_for_each_purpose(self):
         sys.path.insert(0, str(HERE))
         import pair
+        # (recorded stage, --then, stage after, effort): the same stage resets too, and
+        # no --then keeps the recorded stage
+        cases = (("plan", "plan", "plan", "xhigh"), ("impl", "impl", "impl", "high"),
+                 ("plan", "impl", "impl", "high"), ("plan", "finish", "impl", "high"),
+                 ("impl", "finish", "impl", "high"), ("impl", None, "impl", "high"),
+                 ("impl", "reviews", "plan", "xhigh"), ("plan", "reviews", "plan", "xhigh"),
+                 ("plan", None, "plan", "xhigh"))
+        for recorded, then, stage, effort in cases:
+            with self.subTest(recorded=recorded, then=then):
+                self.log.unlink(missing_ok=True)
+                base = self.pair_base(recorded)
+                # a single session beside the pair never lends the writer its conversation
+                (base / ".task-stage").write_text(json.dumps({"claude_session": OTHER_ID}))
+                r = self.fresh(base, *(("--then", then) if then else ()))
+                self.assertEqual(r.returncode, 0, r.stderr)
+                cfg = self.cfg()
+                sid = cfg["claude_session"]["writer"]
+                self.assertNotIn(sid, (WRITER_ID, OTHER_ID))
+                self.assertEqual(cfg["stage"], stage)
+                self.assertNotIn("fresh", cfg)
+                purpose = then or "continue"
+                prompt = pair.FRESH_PROMPTS[purpose].format(decisions=".pair/decisions.md",
+                                                             stage=stage.upper())
+                self.assertEqual(self.new_commands(), [
+                    "zsh -lc 'claude --dangerously-skip-permissions "
+                    f"--session-id {sid} --model claude-opus-5-5 --effort {effort} "
+                    f"\"{prompt}\"'"])
+                brief = (base / ".pair/reviewer-brief.txt").read_text()
+                self.assertIn(pair.FRESH_CATCH_UPS[purpose], brief)
+                self.assertNotIn("This task was re-opened", brief)
+                self.assertEqual((cfg["agterm_session"], cfg["opencode"]["session"]),
+                                 (NEW_SID, "ses_reviewer"))
+
+    def test_fresh_prompts_name_the_purpose_and_the_decisions_log_of_the_mode(self):
+        sys.path.insert(0, str(HERE))
+        import pair
+        self.assertEqual(set(pair.FRESH_PROMPTS),
+                         {"plan", "impl", "finish", "reviews", "continue"})
+        self.assertEqual(set(pair.FRESH_CATCH_UPS), set(pair.FRESH_PROMPTS))
+        starts = {"plan": "Plan discussion:", "impl": "Implementation:", "finish": "Finish:",
+                  "reviews": "Plan review:", "continue": "Fresh start:"}
+        for purpose, text in pair.FRESH_PROMPTS.items():
+            self.assertTrue(text.startswith(starts[purpose]))
+            for decisions in (".pair/decisions.md", ".task-decisions.md"):
+                prompt = text.format(decisions=decisions, stage="IMPL")
+                self.assertFalse(pair.SHELL_SPECIAL.intersection(prompt), purpose)
+                # the router hooks key on it to skip their routing pass
+                self.assertTrue(pair.FRESH_PROMPT_RE.match(prompt), purpose)
+                if purpose in ("impl", "finish", "reviews"):
+                    self.assertIn(decisions, prompt)
+                    self.assertIn(pair.USER_DECISIONS_FILE, prompt)
+                if purpose == "continue":
+                    self.assertNotIn(decisions, prompt)
+                    self.assertIn("stays in its IMPL stage", prompt)
+                    self.assertIn("Load no skill and read nothing about the task", prompt)
+                else:
+                    self.assertIn(pair.TASK_SKILL_ONLY, prompt)
+        for purpose, text in pair.FRESH_CATCH_UPS.items():
+            self.assertFalse(pair.SHELL_SPECIAL.intersection(text), purpose)
+            self.assertIn("never the old messages", text)
+            self.assertIn("cleared on purpose", text)
+            if purpose in ("impl", "finish", "reviews"):
+                self.assertIn(pair.USER_DECISIONS_FILE, text)
+        self.assertIn(pair.USER_DECISIONS_FILE, pair.CATCH_UP)
+        self.assertIn(pair.USER_DECISIONS_FILE, pair.SESSION_START_NOTE)
+
+    def test_a_later_stage_resumes_the_new_conversations(self):
         base = self.pair_base("plan")
-        r = self.stage(base, "plan", "--fresh")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        cfg = self.cfg()
-        sid = cfg["claude_session"]["writer"]
-        self.assertNotEqual(sid, WRITER_ID)
-        self.assertNotIn("fresh", cfg)
-        self.assertEqual(self.new_commands(), [
-            "zsh -lc 'claude --dangerously-skip-permissions "
-            f"--session-id {sid} --model claude-opus-5-5 --effort xhigh "
-            f"\"{pair.FRESH_PROMPT}\"'"])
-        brief = (base / ".pair/reviewer-brief.txt").read_text()
-        self.assertIn(pair.FRESH_CATCH_UP, brief)
-        self.assertNotIn("This task was re-opened", brief)
-        # a later stage change resumes the new conversation, with no fresh prompt
+        self.assertEqual(self.fresh(base, "--then", "plan").returncode, 0)
+        sid = self.cfg()["claude_session"]["writer"]
         self.transcript(sid)
         self.sessions({"id": NEW_SID, "name": "ABC-1 thing", "foreground": ["claude"],
                        "hasSplit": True, "splitForegroundShell": "zsh",
@@ -1999,21 +2193,55 @@ class StageTests(PairTestCase):
         self.assertEqual(self.new_commands()[-1],
                          "zsh -lc 'claude --dangerously-skip-permissions "
                          f"--resume {sid} --model claude-opus-5-5 --effort high'")
+        self.assertIn("This task was re-opened", (base / ".pair/reviewer-brief.txt").read_text())
 
-    def test_fresh_plan_with_an_opencode_writer_drops_both_sessions(self):
+    def test_fresh_with_an_opencode_writer_never_takes_an_old_or_the_latest_session(self):
         sys.path.insert(0, str(HERE))
         import pair
         base = self.pair_base("plan", writer="opencode")
-        r = self.stage(base, "plan", "--fresh")
+        cfg = self.cfg()
+        cfg["opencode_session"] = "ses_writer"
+        self.write_cfg(cfg)
+        self.fake_opencode()
+        # the fake is live: without a recorded session --resume takes the newest one
+        (base / ".task-stage").write_text("{}")
+        self.assertEqual(self.run_pair("opencode-args", "--base", str(base), "--single",
+                                       "--resume").stdout.strip(),
+                         "--agent planning --session ses_latest")
+        self.stub.sessions[0]["id"] = "ses_fresh"
+        r = self.fresh(base, "--then", "impl")
         self.assertEqual(r.returncode, 0, r.stderr)
+        prompt = pair.FRESH_PROMPTS["impl"].format(decisions=".pair/decisions.md", stage="IMPL")
         self.assertEqual(self.new_commands(), [
-            f"zsh -lc 'opencode --auto --agent planning \"{pair.FRESH_PROMPT}\"'"])
-        sid = self.cfg()["claude_session"]["reviewer"]
+            f"zsh -lc 'opencode --auto --agent main \"{prompt}\"'"])
+        cfg = self.cfg()
+        sid = cfg["claude_session"]["reviewer"]
         self.assertNotEqual(sid, REVIEWER_ID)
         start = (base / ".pair/reviewer-start.sh").read_text()
-        self.assertIn(f"--session-id {sid} --model claude-opus-5-5 --effort xhigh ", start)
+        self.assertIn(f"--session-id {sid} --model claude-opus-5-5 --effort high ", start)
+        first = start.rstrip("\n").rsplit(" \"", 1)[1].rstrip("\"")
+        # the router hooks skip it, and the reviewer pair hook never forwards it
+        self.assertTrue(pair.FRESH_PROMPT_RE.match(first), first)
+        self.assertIn(pair.FRESH_CATCH_UPS["impl"], (base / ".pair/reviewer-brief.txt").read_text())
+        self.assertEqual((cfg["stage"], cfg["opencode_session"]), ("impl", "ses_fresh"))
+        self.assertNotIn("fresh", cfg)
 
-    def test_fresh_plan_of_a_single_session(self):
+    def test_a_later_stage_resumes_the_new_conversations_of_an_opencode_writer(self):
+        base = self.pair_base("plan", writer="opencode")
+        self.stub.sessions[0]["id"] = "ses_fresh"
+        self.assertEqual(self.fresh(base, "--then", "plan").returncode, 0)
+        sid = self.cfg()["claude_session"]["reviewer"]
+        self.transcript(sid)
+        self.sessions({"id": NEW_SID, "name": "ABC-1 thing", "foreground": ["opencode"],
+                       "hasSplit": True, "splitForegroundShell": "zsh",
+                       "splitForeground": ["claude"]})
+        self.assertEqual(self.stage(base, "impl").returncode, 0)
+        self.assertEqual(self.new_commands()[-1],
+                         "zsh -lc 'opencode --auto --agent main --session ses_fresh'")
+        self.assertIn(f"--resume {sid} --model claude-opus-5-5 --effort high ",
+                      (base / ".pair/reviewer-start.sh").read_text())
+
+    def test_fresh_of_a_single_claude_session(self):
         sys.path.insert(0, str(HERE))
         import pair
         (self.base_dir / ".task-stage").write_text(json.dumps({
@@ -2023,15 +2251,378 @@ class StageTests(PairTestCase):
         self.env["CLAUDE_CODE_SESSION_ID"] = WRITER_ID
         self.transcript(WRITER_ID)
         self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]})
-        r = self.stage(self.base_dir, "plan", "--fresh")
+        r = self.fresh(self.base_dir, "--then", "impl")
         self.assertEqual(r.returncode, 0, r.stderr)
         rec = self.single()
         self.assertNotEqual(rec["claude_session"], WRITER_ID)
+        self.assertEqual(rec["stage"], "impl")
         self.assertNotIn("fresh", rec)
+        prompt = pair.FRESH_PROMPTS["impl"].format(decisions=".task-decisions.md", stage="IMPL")
         self.assertEqual(self.new_commands(), [
             "zsh -lc 'claude --dangerously-skip-permissions "
-            f"--session-id {rec['claude_session']} --model claude-opus-5-5 --effort xhigh "
-            f"\"{pair.FRESH_PROMPT}\"'"])
+            f"--session-id {rec['claude_session']} --model claude-opus-5-5 --effort high "
+            f"\"{prompt}\"'"])
+        self.assertFalse(any(c["argv"][:2] == ["session", "split"] for c in self.agterm_calls()))
+        self.assertFalse((self.base_dir / ".pair").exists())
+
+    def install_auto_context_plugin(self, enabled=True):
+        """An installed superpowers whose SessionStart hook loads a skill."""
+        source = self.root / "superpowers-7.0.0"
+        (source / "skills" / "brainstorming").mkdir(parents=True)
+        (source / "hooks").mkdir()
+        (source / "hooks" / "hooks.json").write_text('{"hooks": {"SessionStart": []}}')
+        config = self.root / "claude"
+        (config / "plugins").mkdir(parents=True, exist_ok=True)
+        plugin_id = "superpowers@claude-plugins-official"
+        (config / "settings.json").write_text(json.dumps({"enabledPlugins": {plugin_id: enabled}}))
+        (config / "plugins" / "installed_plugins.json").write_text(json.dumps(
+            {"plugins": {plugin_id: [{"installPath": str(source)}]}}))
+        return source
+
+    def test_a_fresh_claude_conversation_gets_plugin_skills_without_their_hooks(self):
+        source = self.install_auto_context_plugin()
+        (self.base_dir / ".task-stage").write_text(json.dumps({
+            "stage": "plan", "claude_session": WRITER_ID,
+            "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]})
+        r = self.fresh(self.base_dir)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        folder = self.base_dir.resolve() / ".task-fresh"
+        copy = folder / "plugins" / "superpowers"
+        self.assertIn(f"--settings \"{folder / 'claude-writer-settings.json'}\" "
+                      f"--plugin-dir \"{copy}\" ", self.new_commands()[0])
+        self.assertEqual(json.loads((folder / "claude-writer-settings.json").read_text()),
+                         {"enabledPlugins": {"superpowers@claude-plugins-official": False}})
+        self.assertEqual(json.loads((copy / ".claude-plugin/plugin.json").read_text())["name"],
+                         "superpowers")
+        self.assertEqual((copy / "skills").resolve(), (source / "skills").resolve())
+        self.assertFalse((copy / "hooks").exists())
+        # a later restart resumes that conversation with the plugin as installed
+        rec = self.single()
+        self.transcript(rec["claude_session"])
+        self.env["CLAUDE_CODE_SESSION_ID"] = rec["claude_session"]
+        self.sessions({"id": NEW_SID, "name": "ABC-1 thing", "foreground": ["claude"]})
+        self.env["AGTERM_SESSION_ID"] = NEW_SID
+        self.assertEqual(self.stage(self.base_dir, "impl").returncode, 0)
+        self.assertNotIn("--plugin-dir", self.new_commands()[-1])
+
+    def test_a_fresh_pair_writer_keeps_its_pair_hooks_in_the_last_settings(self):
+        self.install_auto_context_plugin()
+        base = self.pair_base("plan")
+        self.assertEqual(self.fresh(base, "--then", "impl").returncode, 0)
+        path = base.resolve() / ".task-fresh" / "claude-writer-settings.json"
+        self.assertIn(f"--settings \"{path}\"", self.new_commands()[0])
+        # Claude Code applies only the last --settings: this one, after the launcher's
+        settings = json.loads(path.read_text())
+        self.assertEqual(settings["enabledPlugins"],
+                         {"superpowers@claude-plugins-official": False})
+        self.assertIn("UserPromptSubmit", settings["hooks"])
+        self.assertIn("PreToolUse", settings["hooks"])
+
+    def test_a_fresh_claude_conversation_leaves_a_disabled_plugin_alone(self):
+        self.install_auto_context_plugin(enabled=False)
+        (self.base_dir / ".task-stage").write_text(json.dumps({
+            "stage": "impl", "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]})
+        self.assertEqual(self.fresh(self.base_dir).returncode, 0)
+        self.assertNotIn("--settings", self.new_commands()[0])
+        self.assertFalse((self.base_dir / ".task-fresh").exists())
+
+    def test_fresh_of_a_single_opencode_session_keeps_the_stage_and_takes_no_session(self):
+        sys.path.insert(0, str(HERE))
+        import pair
+        (self.base_dir / ".task-stage").write_text(json.dumps({
+            "stage": "plan", "opencode_session": "ses_old",
+            "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.fake_opencode()
+        self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["opencode"]})
+        r = self.fresh(self.base_dir)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        prompt = pair.FRESH_PROMPTS["continue"].format(decisions=".task-decisions.md", stage="PLAN")
+        self.assertEqual(self.new_commands(), [
+            f"zsh -lc 'opencode --auto --agent planning \"{prompt}\"'"])
+        rec = self.single()
+        self.assertEqual(rec["stage"], "plan")
+        self.assertNotIn("opencode_session", rec)
+        self.assertNotIn("fresh", rec)
+
+    def test_fresh_of_a_single_session_beside_a_pair_leaves_the_pair_alone(self):
+        sys.path.insert(0, str(HERE))
+        import pair
+        base = self.pair_base("plan")
+        (base / ".pair/inbox/writer/0001-reviewer.md").write_text("Chat from reviewer: hi\n")
+        before = (base / ".pair/config.json").read_text()
+        (base / ".task-stage").write_text(json.dumps({
+            "stage": "plan", "claude_session": OTHER_ID,
+            "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.transcript(OTHER_ID)
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        r = self.fresh(base, "--single", "--then", "finish")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rec = self.single()
+        self.assertNotIn(rec["claude_session"], (OTHER_ID, WRITER_ID))
+        self.assertEqual(rec["stage"], "impl")
+        self.assertNotIn("fresh", rec)
+        prompt = pair.FRESH_PROMPTS["finish"].format(decisions=".task-decisions.md", stage="IMPL")
+        self.assertEqual(self.new_commands(), [
+            "zsh -lc 'claude --dangerously-skip-permissions "
+            f"--session-id {rec['claude_session']} --model claude-opus-5-5 --effort high "
+            f"\"{prompt}\"'"])
+        self.assertEqual(self.launcher_log.read_text().split(),
+                         ["abc-1-thing", "--print-command", "--single"])
+        self.assertEqual((base / ".pair/config.json").read_text(), before)
+        self.assertTrue((base / ".pair/inbox/writer/0001-reviewer.md").exists())
+        self.assertFalse(any(c["argv"][:2] == ["session", "split"] for c in self.agterm_calls()))
+
+    def test_fresh_is_refused_before_any_change(self):
+        base = self.pair_base("plan")
+        (base / ".pair/inbox/reviewer/0001-writer.md").write_text("Chat from writer: hi\n")
+        thread = base / ".pair/threads/t1"
+        thread.mkdir(parents=True)
+        (thread / "meta.json").write_text(json.dumps({
+            "id": "t1", "topic": "retry", "files": ["a.go"], "status": "open",
+            "created_ms": 1}))
+        before = (base / ".pair/config.json").read_text()
+        r = self.fresh(base, "--then", "plan")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertIn("t1 is open", r.stderr)
+        (thread / "meta.json").write_text(json.dumps({
+            "id": "t1", "topic": "retry", "files": ["a.go"], "status": "agreed",
+            "created_ms": 1}))
+        cfg = self.cfg()
+        del cfg["launcher"]
+        self.write_cfg(cfg)
+        before_launcher = (base / ".pair/config.json").read_text()
+        r = self.fresh(base, "--then", "plan")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--launcher", r.stderr)
+        self.assertEqual((base / ".pair/config.json").read_text(), before_launcher)
+        self.assertNotEqual(before, before_launcher)
+        self.assertTrue((base / ".pair/inbox/reviewer/0001-writer.md").exists())
+        self.assertEqual(self.agterm_calls(), [])
+        # a single session outside agterm: nothing to restart, the record stays
+        self.env["AGTERM_SESSION_ID"] = ""
+        single = {"stage": "impl", "claude_session": WRITER_ID,
+                  "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}
+        (base / ".task-stage").write_text(json.dumps(single))
+        r = self.fresh(base, "--single")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no agterm session", r.stderr)
+        self.assertEqual(self.single(), single)
+
+    def assert_plan_stays_closed(self, base, *extra):
+        """stage plan and fresh --then plan refuse with exit 1 and touch nothing."""
+        records = [base / ".pair/config.json", base / ".task-stage"]
+        before = [p.read_bytes() if p.exists() else None for p in records]
+        for command in (("stage", "--base", str(base), "plan"),
+                        ("fresh", "--base", str(base), "--then", "plan")):
+            r = self.run_pair(*command, "--foreground", "--wait-seconds", "2", *extra)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("one-way", r.stderr)
+            self.assertIn("implementation work", r.stderr)
+        self.assertEqual([p.read_bytes() if p.exists() else None for p in records], before)
+        self.assertEqual(self.agterm_calls(), [])
+
+    def test_the_plan_never_reopens_from_a_pair_on_impl(self):
+        self.assert_plan_stays_closed(self.pair_base("impl"))
+
+    def test_the_plan_never_reopens_from_a_single_session_on_impl(self):
+        (self.base_dir / ".task-stage").write_text(json.dumps({
+            "stage": "impl", "claude_session": WRITER_ID,
+            "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.assert_plan_stays_closed(self.base_dir)
+        self.assertFalse((self.base_dir / ".pair").exists())
+
+    def test_the_plan_never_reopens_from_a_single_session_beside_a_pair_on_impl(self):
+        base = self.pair_base("impl")
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.assert_plan_stays_closed(base, "--single")
+        (base / ".task-stage").write_text(json.dumps({"stage": "plan"}))
+        self.assert_plan_stays_closed(base, "--single")
+
+    def test_the_refusal_beats_an_open_thread(self):
+        base = self.pair_base("impl")
+        thread = base / ".pair/threads/t1"
+        thread.mkdir(parents=True)
+        (thread / "meta.json").write_text(json.dumps({
+            "id": "t1", "topic": "retry", "files": ["a.go"], "status": "open",
+            "created_ms": 1}))
+        self.assert_plan_stays_closed(base)
+
+    def test_a_stale_plan_record_never_reopens_the_plan(self):
+        base = self.pair_base("plan")
+        (base / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        self.assert_plan_stays_closed(base)
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.assert_plan_stays_closed(base, "--single")
+
+    def test_reviews_reopens_the_plan_in_both_records(self):
+        base = self.pair_base("impl")
+        (base / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        r = self.fresh(base, "--then", "reviews")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cfg()["stage"], "plan")
+        self.assertEqual(self.single()["stage"], "plan")
+        self.assertEqual(self.run_pair("plan-open", "--base", str(base)).returncode, 0)
+        # the reworked plan is approved again: back to IMPL
+        self.sessions({"id": NEW_SID, "name": "ABC-1 thing", "foreground": ["claude"],
+                       "hasSplit": True, "splitForegroundShell": "zsh",
+                       "splitForeground": ["opencode"]})
+        self.assertEqual(self.fresh(base, "--then", "impl").returncode, 0)
+        self.assertEqual(self.cfg()["stage"], "impl")
+        self.assertEqual(self.run_pair("plan-open", "--base", str(base)).returncode, 1)
+
+    def test_reviews_reopens_a_single_session_beside_an_impl_pair(self):
+        base = self.pair_base("impl")
+        (base / ".task-stage").write_text(json.dumps({
+            "stage": "impl", "claude_session": OTHER_ID,
+            "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        r = self.fresh(base, "--single", "--then", "reviews")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.single()["stage"], "plan")
+        self.assertEqual(self.cfg()["stage"], "plan")
+        self.assertIn("--effort xhigh", self.new_commands()[-1])
+
+    def test_reviews_is_refused_before_any_change_while_a_companion_is_open(self):
+        base = self.pair_base("impl")
+        (base / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        self.sessions({"id": "OLD-1", "name": "ABC-1 thing", "foreground": ["claude"]},
+                      {"id": "C-1", "name": "test core ABC-1", "parent": "OLD-1"})
+        records = [base / ".pair/config.json", base / ".task-stage"]
+        before = [p.read_bytes() for p in records]
+        r = self.fresh(base, "--then", "reviews")
+        self.assertEqual(r.returncode, 5, r.stderr)
+        self.assertEqual([p.read_bytes() for p in records], before)
+
+    def test_a_task_never_on_impl_keeps_its_plan_stage(self):
+        base = self.pair_base("plan")
+        self.assertEqual(json.loads(self.stage(base, "plan").stdout),
+                         {"stage": "plan", "changed": False})
+        self.assertEqual(self.fresh(base, "--then", "plan").returncode, 0)
+        self.assertEqual(self.cfg()["stage"], "plan")
+
+    def test_fresh_on_a_single_session_beside_an_impl_pair_stays_impl(self):
+        base = self.pair_base("impl")
+        (base / ".task-stage").write_text(json.dumps({
+            "claude_session": OTHER_ID,
+            "launcher": {"script": str(self.launcher), "branch": "abc-1-thing"}}))
+        self.env["AGTERM_SESSION_ID"] = "OLD-1"
+        self.assertEqual(self.fresh(base, "--single").returncode, 0)
+        self.assertEqual(self.single()["stage"], "impl")
+        self.assertIn("--effort high", self.new_commands()[-1])
+
+    def test_a_stale_record_starts_on_the_impl_models(self):
+        base = self.pair_base("plan")
+        (base / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        r = self.run_pair("claude-args", "--base", str(base))
+        self.assertIn("--effort high", r.stdout)
+        self.assertEqual(self.cfg()["stage"], "impl")
+
+    def test_a_pair_turned_into_a_single_session_keeps_impl(self):
+        base = self.pair_base("impl")
+        r = self.run_pair("claude-args", "--base", str(base), "--single")
+        self.assertIn("--effort high", r.stdout)
+        self.assertEqual(self.single()["stage"], "impl")
+
+    def test_a_reopened_pair_takes_impl_from_the_single_record(self):
+        base = self.pair_base("plan")
+        (base / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        r = self.run_pair("init", "--base", str(base), "--writer", "claude")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cfg()["stage"], "impl")
+
+    def test_plan_open_is_exit_1_only_on_impl(self):
+        def plan_open():
+            return self.run_pair("plan-open", "--base", str(self.base_dir))
+        self.assertEqual(plan_open().returncode, 0)
+        (self.base_dir / ".task-stage").write_text(json.dumps({"stage": "plan"}))
+        self.assertEqual(plan_open().returncode, 0)
+        (self.base_dir / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        r = plan_open()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("one-way", r.stderr)
+        (self.base_dir / ".task-stage").unlink()
+        self.pair_base("impl")
+        self.assertEqual(plan_open().returncode, 1)
+
+    def script(self, name, *args, **env):
+        return subprocess.run(["bash", str(HERE / name), *args], capture_output=True, text=True,
+                              cwd=self.base_dir, timeout=60,
+                              env={k: v for k, v in {**os.environ, **env}.items()
+                                   if not k.startswith("AGTERM")})
+
+    def test_the_plan_gate_scripts_refuse_on_impl_and_run_on_plan(self):
+        plan = self.base_dir / "PLAN.md"
+        plan.write_text("# Plan\n")
+        record = self.base_dir / ".task-stage"
+        record.write_text(json.dumps({"stage": "plan"}))
+        for args in (("plan-delta",), ("plan-save",)):
+            self.assertEqual(self.script("review-snapshot.sh", *args).returncode, 0, args)
+        gate = ("plannotator-session.sh", "annotate", "PLAN.md", "--gate")
+        self.assertEqual(self.script(*gate, PLANNOTATOR="/usr/bin/true").returncode, 0)
+        shutil.rmtree(self.base_dir / ".scratch")
+        record.write_text(json.dumps({"stage": "impl"}))
+        for args in (("plan-delta",), ("plan-save",)):
+            r = self.script("review-snapshot.sh", *args)
+            self.assertEqual(r.returncode, 1, args)
+            self.assertIn("one-way", r.stderr)
+        for path in ("PLAN.md", "./PLAN.md", str(plan)):
+            r = self.script("plannotator-session.sh", "annotate", path,
+                            PLANNOTATOR="/usr/bin/true")
+            self.assertEqual(r.returncode, 1, path)
+            self.assertIn("one-way", r.stderr)
+        self.assertFalse((self.base_dir / ".scratch/plan-review").exists())
+        self.assertFalse((self.base_dir / ".scratch/plannotator.lock").exists())
+        r = self.script("plannotator-session.sh", "annotate", ".scratch/decisions-review.md",
+                        PLANNOTATOR="/usr/bin/true")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_hook_line_on_impl_closes_the_plan(self):
+        base = self.pair_base("impl")
+        r = self.run_pair("user-prompt", "--base", str(base), "--role", "writer",
+                          stdin=json.dumps({"prompt": "add wildcards", "session_id": WRITER_ID}))
+        self.assertIn("TASK STAGE: IMPL", r.stdout)
+        self.assertIn("PLAN.md is closed", r.stdout)
+        self.assertIn("all feedback is implementation work", r.stdout)
+
+    def test_the_hook_line_on_plan_stays_short(self):
+        base = self.pair_base("plan")
+        r = self.run_pair("user-prompt", "--base", str(base), "--role", "writer",
+                          stdin=json.dumps({"prompt": "drop step 3", "session_id": WRITER_ID}))
+        self.assertIn("TASK STAGE: PLAN (SKILL.md, Stages).", r.stdout)
+        self.assertNotIn("PLAN.md is closed", r.stdout)
+
+    def test_the_hook_line_takes_impl_from_a_stale_record(self):
+        base = self.pair_base("plan")
+        (base / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        r = self.run_pair("user-prompt", "--base", str(base), "--role", "writer",
+                          stdin=json.dumps({"prompt": "go on", "session_id": WRITER_ID}))
+        self.assertIn("TASK STAGE: IMPL", r.stdout)
+        self.assertEqual(self.cfg()["stage"], "impl")
+
+    def test_fresh_archives_the_backlog_so_the_new_agents_never_get_it(self):
+        base = self.pair_base("plan")
+        (base / ".pair/inbox/reviewer/0001-writer.md").write_text("Chat from writer: old\n")
+        (base / ".pair/inbox/writer/0002-reviewer.md").write_text("Chat from reviewer: old\n")
+        held = base / ".pair/held/reviewer"
+        held.mkdir(parents=True)
+        (held / "0003-writer.md").write_text("Chat from writer: FYI: running fresh\n")
+        r = self.fresh(base, "--then", "impl")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # launch flushes an unread OpenCode backlog: nothing was left to flush
+        self.assertEqual(self.stub.prompts(), [])
+        for role in ("writer", "reviewer"):
+            self.assertEqual(list((base / ".pair/inbox" / role).glob("*.md")), [])
+        self.assertEqual(list(held.glob("*.md")), [])
+        self.assertTrue((base / ".pair/inbox/writer/read/0002-reviewer.md").exists())
+        archived = "".join(p.read_text() for p in (base / ".pair/inbox/reviewer/read").glob("*"))
+        self.assertIn("Chat from writer: old", archived)
+        self.assertIn("FYI: running fresh", archived)
 
     def test_reviewer_process_is_recognised_with_either_stage_agent(self):
         sys.path.insert(0, str(HERE))
@@ -2172,6 +2763,23 @@ class EditGuardTests(PairTestCase):
             with self.subTest(target=target):
                 self.assertIsNone(self.guard(target))
 
+    def test_plan_md_at_the_base_is_denied_on_impl(self):
+        for target in ("PLAN.md", str(self.base / "PLAN.md")):
+            with self.subTest(target=target):
+                out = self.guard(target, tool="Write")
+                self.assertEqual(out["permissionDecision"], "deny")
+                self.assertIn("PLAN.md is closed", out["permissionDecisionReason"])
+        self.assertIsNone(self.guard("repo/docs/PLAN.md"))
+
+    def test_plan_md_is_denied_when_only_the_single_record_is_on_impl(self):
+        make_base(self.base_dir, writer="claude", stage="plan")
+        (self.base / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        self.assertEqual(self.guard("PLAN.md")["permissionDecision"], "deny")
+
+    def test_plan_md_passes_on_plan(self):
+        make_base(self.base_dir, writer="claude", stage="plan")
+        self.assertIsNone(self.guard("PLAN.md"))
+
     def test_bad_input_never_blocks(self):
         r = self.run_pair("edit-guard", "--base", str(self.base), "--role", "writer",
                           stdin="not json")
@@ -2204,3 +2812,180 @@ class DecisionLogTests(PairTestCase):
         self.assertEqual((base / ".pair/decisions.md").read_text(),
                          "## t1 agreed: retry [a.go]\n\nRetry 3 times in a.go Fetch.\n\n"
                          "## main: cache key\n\nKey on tenant and id.\n\n")
+
+    def test_user_decided_works_in_a_single_session(self):
+        date = time.strftime("%Y-%m-%d")
+        for words in ("Use a wildcard for the name.", "  Keep tags as an array.\n"):
+            r = self.run_pair("user-decided", "--base", str(self.base_dir), "--stdin", stdin=words)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((self.base_dir / ".pair").exists())
+        self.assertEqual((self.base_dir / ".task-user-decisions.md").read_text(),
+                         f"### {date}\n\nUse a wildcard for the name.\n\n"
+                         f"### {date}\n\nKeep tags as an array.\n\n")
+
+    def test_user_decided_keeps_long_words_whole(self):
+        words = "x" * 5000
+        r = self.run_pair("user-decided", "--base", str(self.base_dir), "--stdin", stdin=words)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(words, (self.base_dir / ".task-user-decisions.md").read_text())
+
+    def test_user_decided_refuses_empty_words(self):
+        r = self.run_pair("user-decided", "--base", str(self.base_dir), "--stdin", stdin=" \n")
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse((self.base_dir / ".task-user-decisions.md").exists())
+
+    def test_user_decided_stays_out_of_git(self):
+        subprocess.run(["git", "init", "-q", str(self.base_dir)], check=True)
+        r = self.run_pair("user-decided", "--base", str(self.base_dir), "--stdin", stdin="Yes.")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        status = subprocess.run(["git", "-C", str(self.base_dir), "status", "--porcelain"],
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(status.stdout, "")
+
+
+PLAN_TEXT = ("# Plan\n\n## Not requested\n\nnone\n\n## Q&A\n\n"
+             "## Decisions\n\n### U99 — scope (2026-01-01)\n\n"
+             "- asked: 2026-01-01 (chat): “keep x”\n- decided: I decided to keep x.\n"
+             "- done: not done yet: S1\n\n"
+             "### D1 — planner choice (2026-01-01, PLAN, main)\n\nx\n\n"
+             "### t98 agreed: cache [a.go]\n\ny\n\n"
+             "## Steps\n\n```\n## not a heading\n```\n")
+
+
+class PlanLogTests(PairTestCase):
+    """Q&A and model decisions: PLAN.md on PLAN, the task logs on IMPL (SKILL.md, Q&A log)."""
+
+    def plan(self, text=PLAN_TEXT):
+        (self.base_dir / "PLAN.md").write_text(text)
+
+    def qa(self, topic, body):
+        return self.run_pair("qa", "--base", str(self.base_dir), "--topic", topic, "--stdin",
+                             stdin=body)
+
+    def section(self, heading):
+        text = (self.base_dir / "PLAN.md").read_text()
+        start = text.index(heading + "\n")
+        nxt = text.find("\n## ", start + len(heading))
+        return text[start:nxt if nxt >= 0 else len(text)]
+
+    def open_gate(self):
+        lock = self.base_dir / ".scratch/plannotator.lock"
+        lock.mkdir(parents=True)
+        (lock / "args").write_text("annotate PLAN.md --gate")
+        self.env["PLANNOTATOR"] = shutil.which("true")
+        return lock
+
+    def test_qa_on_plan_goes_to_the_qa_section_with_numbered_entries(self):
+        self.plan()
+        date = time.strftime("%Y-%m-%d")
+        for topic, body in (("scope", "- question: why?\n- answer: because"),
+                            ("retry", "- question: how many?\n- writer: 3\n- reviewer: 5\n"
+                                      "- merged: 3\n- result: agreed")):
+            r = self.qa(topic, body)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.section("## Q&A"),
+                         f"## Q&A\n\n### Q1 — scope ({date}, PLAN)\n\n- question: why?\n"
+                         f"- answer: because\n\n### Q2 — retry ({date}, PLAN)\n\n"
+                         "- question: how many?\n- writer: 3\n- reviewer: 5\n- merged: 3\n"
+                         "- result: agreed\n")
+        self.assertTrue((self.base_dir / "PLAN.md").read_text().endswith(
+            "## Steps\n\n```\n## not a heading\n```\n"))
+
+    def test_a_missing_section_is_added_and_a_fenced_heading_is_no_boundary(self):
+        self.plan("# Plan\n\n```\n## Q&A\n```\n")
+        r = self.qa("scope", "body")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = (self.base_dir / "PLAN.md").read_text()
+        self.assertTrue(text.startswith("# Plan\n\n```\n## Q&A\n```\n\n## Q&A\n\n### Q1 — scope"),
+                        text)
+
+    def test_qa_before_plan_md_exists_is_held_then_flushed(self):
+        r = self.qa("ticket", "- question: which env?\n- answer: prod")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("plan-log-pending.json", json.loads(r.stdout)["logged"])
+        self.plan()
+        r = self.run_pair("plan-log-flush", "--base", str(self.base_dir))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), {"written": 1, "held": 0})
+        self.assertIn("### Q1 — ticket", self.section("## Q&A"))
+        self.assertFalse((self.base_dir / ".scratch/plan-log-pending.json").exists())
+
+    def test_an_open_plan_gate_holds_entries_in_order(self):
+        self.plan()
+        lock = self.open_gate()
+        for topic in ("first", "second"):
+            self.assertEqual(self.qa(topic, "body").returncode, 0)
+        self.assertEqual((self.base_dir / "PLAN.md").read_text(), PLAN_TEXT)
+        r = self.run_pair("plan-log-flush", "--base", str(self.base_dir))
+        self.assertEqual(json.loads(r.stdout), {"written": 0, "held": 2})
+        shutil.rmtree(lock)
+        self.assertEqual(self.qa("third", "body").returncode, 0)
+        section = self.section("## Q&A")
+        self.assertLess(section.index("### Q1 — first"), section.index("### Q2 — second"))
+        self.assertLess(section.index("### Q2 — second"), section.index("### Q3 — third"))
+
+    def test_qa_on_impl_goes_to_the_task_log_and_continues_the_numbers(self):
+        self.plan(PLAN_TEXT.replace("## Q&A\n\n", "## Q&A\n\n### Q1 — old (2026-01-01, PLAN)\n\nx\n\n"))
+        (self.base_dir / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        r = self.qa("rename", "- question: ok?\n- answer: yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        date = time.strftime("%Y-%m-%d")
+        self.assertEqual((self.base_dir / ".task-qa.md").read_text(),
+                         f"### Q2 — rename ({date}, IMPL)\n\n- question: ok?\n- answer: yes\n\n")
+        self.assertNotIn("rename", (self.base_dir / "PLAN.md").read_text())
+
+    def test_model_decided_routes_by_stage_and_stays_above_reviews(self):
+        self.plan()
+        date = time.strftime("%Y-%m-%d")
+        r = self.run_pair("model-decided", "--base", str(self.base_dir), "--topic", "cache",
+                          "--by", "main", "--stdin",
+                          stdin="- decided: I decided to use lru\n- done: not done yet")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"### D2 — cache ({date}, PLAN, main)\n\n- decided: I decided to use lru\n"
+                      "- done: not done yet\n",
+                      self.section("## Decisions"))
+        self.assertNotIn("## Model decisions", (self.base_dir / "PLAN.md").read_text())
+        (self.base_dir / ".task-stage").write_text(json.dumps({"stage": "impl"}))
+        (self.base_dir / ".task-decisions.md").write_text(
+            "## Reviews\n\n- 2026-01-01 — D1 — kept\n")
+        r = self.run_pair("model-decided", "--base", str(self.base_dir), "--topic", "retry",
+                          "--by", "fixer", "--stdin",
+                          stdin="- decided: retry 3 times\n- done: fetch.go:Fetch")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.base_dir / ".task-decisions.md").read_text(),
+                         f"### D3 — retry ({date}, IMPL, fixer)\n\n- decided: retry 3 times\n"
+                         "- done: fetch.go:Fetch\n\n"
+                         "## Reviews\n\n- 2026-01-01 — D1 — kept\n")
+
+    def test_a_pair_decision_on_plan_is_mirrored_into_plan_md(self):
+        stub = StubOpencode()
+        self.addCleanup(stub.close)
+        base = make_base(self.base_dir, writer="claude", port=stub.port, stage="plan")
+        self.plan()
+        r = self.run_pair("decided", "--base", str(base), "--topic", "cache key", "--stdin",
+                          stdin="- decided: key on tenant and id\n- done: not done yet")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("### main: cache key\n\n- decided: key on tenant and id\n- done: not done yet\n",
+                      self.section("## Decisions"))
+        self.assertEqual((base / ".pair/decisions.md").read_text(),
+                         "## main: cache key\n\n- decided: key on tenant and id\n- done: not done yet\n\n")
+
+    def test_a_held_decision_is_flushed_into_decisions(self):
+        self.plan()
+        lock = self.open_gate()
+        r = self.run_pair("model-decided", "--base", str(self.base_dir), "--topic", "cache",
+                          "--by", "main", "--stdin",
+                          stdin="- decided: I decided to use lru\n- done: not done yet")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.base_dir / "PLAN.md").read_text(), PLAN_TEXT)
+        shutil.rmtree(lock)
+        r = self.run_pair("plan-log-flush", "--base", str(self.base_dir))
+        self.assertEqual(json.loads(r.stdout), {"written": 1, "held": 0})
+        self.assertIn("### D2 — cache (", self.section("## Decisions"))
+        self.assertNotIn("## Model decisions", (self.base_dir / "PLAN.md").read_text())
+
+    def test_qa_refuses_an_empty_entry(self):
+        self.plan()
+        r = self.qa("scope", " \n")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual((self.base_dir / "PLAN.md").read_text(), PLAN_TEXT)

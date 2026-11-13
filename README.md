@@ -44,7 +44,8 @@ body. All three harnesses read that format, so the same folder serves all of the
 │       ├── install.sh                writes that entry into the config, and the
 │       │                             TUI plugin into tui.json
 │       ├── install.test.sh           its checks; hermetic, no OpenCode needed
-│       └── tui/codex-resets/         TUI plugin: Codex limit reset countdown by the prompt;
+│       └── tui/codex-resets/         TUI plugin: Codex limit reset countdown and context use
+│                                     on the prompt's model line, its bottom row hidden;
 │                                     index.js is built from the .tsx (npm run build)
 ├── test/                             container checks for the whole install
 │   ├── Dockerfile                    both harness CLIs

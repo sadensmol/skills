@@ -5,12 +5,22 @@
 # context every turn, so the routing rules are ALWAYS present regardless of
 # whether the Skill tool was ever invoked. This closes the failure mode where
 # Claude assumes "a router already ran" and skips the routing pass — leaving
-# downstream skills (go-programming, typescript-programming, …) unloaded.
+# downstream skills (programming-go, programming-typescript, …) unloaded.
 #
 # The skills no longer live inside this plugin: they are installed as Agent
 # Skills, shared with the other harnesses. So the router is resolved from the
 # install locations, in order, and every one of them is a symlink back to the
 # skills repository — the injected text is never a stale copy.
+#
+# The first prompt of a `task fresh` restart (`<label>: your context was cleared on
+# purpose`, sadensmol-task references/fresh.md) gets no routing pass: the new
+# conversation loads only what that prompt's action needs. The runtime contract
+# still goes in — the task skill speaks in its capability names.
+
+input=""
+[ -t 0 ] || input="$(cat 2>/dev/null)"
+FRESH=""
+printf '%s' "$input" | grep -qE '"prompt"[[:space:]]*:[[:space:]]*"[A-Za-z ]+: your context was cleared on purpose' && FRESH=1
 
 for candidate in \
   "${CLAUDE_PLUGIN_ROOT}/../skills/router/SKILL.md" \
@@ -22,6 +32,16 @@ do
     break
   fi
 done
+
+if [ -n "$FRESH" ]; then
+  printf '%s\n' 'TASK FRESH START: no routing pass for this prompt (sadensmol-router → Rules → Task fresh start). Load only the skills this prompt names, and any other skill only when a step of its work needs it.'
+  [ -n "$ROUTER" ] && RUNTIME="$(cd "$(dirname "$ROUTER")" 2>/dev/null && pwd -P)/../../harness/claude-code.md"
+  if [ -n "${RUNTIME:-}" ] && [ -f "$RUNTIME" ]; then
+    printf '\n%s\n\n' '--- Runtime contract for this harness (how to background, spawn, ask, isolate) ---'
+    cat "$RUNTIME"
+  fi
+  exit 0
+fi
 
 printf '%s\n\n' '<SKILL_ACTIVATION_REQUIRED priority="override-default-behavior">'
 printf '%s\n\n' 'EXTREMELY IMPORTANT: The sadensmol-router rules are reproduced IN FULL below and are therefore ALWAYS in context. Evaluate them against the current cwd and prompt NOW, and invoke (via the Skill tool) EVERY downstream skill they name that is not already loaded — BEFORE reading files, editing, running tools, or answering. A different router having run is NOT this router having run; never assume routing is already handled or was cached.'

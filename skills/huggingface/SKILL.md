@@ -7,8 +7,8 @@ description: Download and manage Hugging Face models and datasets with the `hf` 
 
 ## The CLI is `hf`, and it is already authenticated
 
-Use **`hf`**. `huggingface-cli` is the old name for the same tool and still resolves —
-prefer `hf` in anything written down.
+Use **`hf`**. `huggingface-cli` is the old name for the same tool; current
+`huggingface_hub` releases no longer ship it, so write `hf` everywhere.
 
 **A token is already configured on this machine.** Do NOT ask the user to log in, do
 NOT prompt for a token, and do NOT tell them to `export HF_TOKEN`. Verify instead:

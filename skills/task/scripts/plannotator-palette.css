@@ -1,0 +1,9 @@
+/* Plannotator's own palettes: `.theme-plannotator` (dark) and `.theme-plannotator.light`.
+   bg=background, fg=foreground, muted=muted-foreground, line=border, q=card, a=background,
+   mark=accent, partial=destructive. A page inlines this file and sets
+   <html data-theme="dark|light|system"> from scripts/plannotator-theme.sh.
+   Only `system` follows prefers-color-scheme. */
+:root[data-theme=dark]{color-scheme:dark;--bg:oklch(15% .02 260);--fg:oklch(90% .01 260);--muted:oklch(72% .02 260);--line:oklch(35% .02 260);--q:oklch(22% .02 260);--a:oklch(15% .02 260);--mark:oklch(70% .2 60);--partial:oklch(65% .2 25)}
+:root[data-theme=light]{color-scheme:light;--bg:oklch(97% .005 260);--fg:oklch(18% .02 260);--muted:oklch(40% .02 260);--line:oklch(88% .01 260);--q:oklch(100% 0 0);--a:oklch(97% .005 260);--mark:oklch(60% .22 50);--partial:oklch(50% .25 25)}
+:root[data-theme=system]{color-scheme:light dark;--bg:oklch(97% .005 260);--fg:oklch(18% .02 260);--muted:oklch(40% .02 260);--line:oklch(88% .01 260);--q:oklch(100% 0 0);--a:oklch(97% .005 260);--mark:oklch(60% .22 50);--partial:oklch(50% .25 25)}
+@media (prefers-color-scheme: dark){:root[data-theme=system]{--bg:oklch(15% .02 260);--fg:oklch(90% .01 260);--muted:oklch(72% .02 260);--line:oklch(35% .02 260);--q:oklch(22% .02 260);--a:oklch(15% .02 260);--mark:oklch(70% .2 60);--partial:oklch(65% .2 25)}}

@@ -5,12 +5,15 @@ description: "Review code changes for defects, missing docs, over-engineering, a
 
 # Review Code
 
-**Start only on an explicit user request or inside a user-started `task finish` (MUST
-FOLLOW).** Finished code, green tests or a skill's checkpoint never start it.
+**Start only on an explicit user request or inside `task finish` (MUST FOLLOW)**, also
+when the task flow starts `finish` itself (`sadensmol-task` → *Autonomy*). Finished code, green tests or a skill's checkpoint never start it.
 
-Six specialized reviewers examine one change, each on a single concern. They are fanned
-out, one per area, by whatever mechanism the harness offers — never reviewed serially in
-your own context.
+Six review areas examine one change, each on a single concern. They are fanned out, one
+reviewer per area, by whatever mechanism the harness offers — never reviewed serially in
+your own context. Security is the exception in size: two hunters map and hunt the whole
+security surface the change touches, and a verifier tries to refute every candidate. Both
+run Cloudflare's `security-audit` skill, which must be installed from upstream:
+`npx skills add https://github.com/cloudflare/security-audit-skill --skill security-audit --global`.
 
 ## Priority Levels
 
@@ -22,15 +25,16 @@ Every finding MUST carry a priority.
 | **P1** | Important issue that should be addressed but doesn't block the PR | Should fix in this PR or create a follow-up ticket |
 | **P2** | Suggestion for improvement, minor style issue, or nice-to-have | Optional, at author's discretion |
 
-The workflow enforces this: each reviewer returns findings through a schema whose
-`priority` field accepts only `P0`, `P1`, or `P2`.
+The Claude Code workflow enforces this: each reviewer returns findings through a schema whose
+`priority` field accepts only `P0`, `P1`, or `P2`. Security findings get their priority from
+the workflow, mapped from verdict and severity (`references/security.md`).
 
 ## How the reviewers are dispatched
 
-Six reviewers, one per area, each in its own context. **Fan out** — one per area, in
-parallel where the harness allows — and pass each one the **command** that produces the
-diff, never the diff text. Inlining it sends the whole diff seven times, once into your own
-context and once per reviewer, and overflows on a large branch.
+One reviewer per area (two hunters and a verifier for Security), each in its own context.
+**Fan out** — in parallel where the harness allows — and pass each one the **command** that
+produces the diff, never the diff text. Inlining it sends the whole diff once into your own
+context and once more per reviewer, and overflows on a large branch.
 
 How to fan out is harness-specific, and the mechanics are not restated here:
 
@@ -44,24 +48,26 @@ rendered — is the same everywhere.
 ## How the reviewers load project skills
 
 **You** work out the skill list once, and the script passes it to every reviewer. This
-replaces each agent re-deriving it six times over.
+replaces each agent re-deriving it on its own.
 
 1. **One language skill per language in the diff — by file extension, NOT by cwd
    (MUST FOLLOW).** A diff routinely spans several languages and the cwd is only one of
    them, so cwd-only routing silently under-loads: a mostly-Flutter diff with two `.go`
-   files would get its Go reviewed without `go-programming`, producing findings that
+   files would get its Go reviewed without `programming-go`, producing findings that
    contradict that skill's own rules. Map every changed path:
-   `*.go` → `sadensmol-go-programming` (plus `sadensmol-go-integration-tests` when Go
-   test files changed); `*.dart` → `sadensmol-flutter-programming` +
-   `sadensmol-dart-programming`; `*.ts` / `*.tsx` → `sadensmol-typescript-programming`;
-   `*.swift` → `sadensmol-swift-programming`; extend as the diff shows more.
-   **A diff touching even one `.go` file MUST carry `sadensmol-go-programming`** — its
-   rules (no comment by default, so "add a doc comment" is usually the *wrong* finding;
+   `*.go` → `sadensmol-programming-go` (its testing reviewer also reads
+   `references/integration-tests.md`); `*.dart` → `sadensmol-programming-flutter` +
+   `sadensmol-programming-dart`; `*.ts` / `*.tsx` → `sadensmol-programming-typescript`;
+   `*.swift` → `sadensmol-programming-swift`; `*.py` → `sadensmol-programming-python`; extend as the diff shows more. Any
+   language skill also brings `sadensmol-programming` — the language-agnostic rules
+   (comments, naming, code shape, errors, layers) live there.
+   **A diff touching even one `.go` file MUST carry `sadensmol-programming-go`** and
+   `sadensmol-programming` — their rules (no comment by default, so "add a doc comment" is usually the *wrong* finding;
    naming; error handling; mappers) decide whether a finding is valid at all.
 2. **Add the routing pass** — `sadensmol-router`, plus any project router whose cwd
    matches (`<project>-router`), for project-specific conventions.
 3. **Add concern-specific skills** — the testing reviewer also needs the stack's testing
-   skill (for Go, `sadensmol-go-integration-tests`); the script appends it for that
+   reference (for Go, `sadensmol-programming-go` → `references/integration-tests.md`); the script appends it for that
    reviewer only.
 
 Run the same routing pass in your own context too, before reviewing: you need the
@@ -69,85 +75,38 @@ project's conventions for the PR/commit checks below.
 
 ## Comments (MUST FOLLOW)
 
-Working code needs no prose around it. The default for any change is **zero comments** —
-a better name, a smaller function, or a clearer type says it better than a sentence above
-it. This binds the review in two directions.
-
-**SCOPE — hand-written code only. Generated files are exempt (MUST FOLLOW).** Never
-file a comment finding against a generated file: its comments come from its generator, so
-"delete this banner" or "this comment restates the code" is noise the author cannot act on
-without a hand edit that the next regeneration wipes. Skip a changed path when it carries
-the `// Code generated ... DO NOT EDIT.` header (or its language's equivalent), or when it
-is a mock (`**/mocks/*`), a protobuf/gRPC stub (`*.pb.go`, `*_grpc.pb.go`, `*.pb.dart`), an
-OpenAPI/codegen API package, a `gen/` package, a `*_gen.go` / `*.g.dart` / `*.freezed.dart`
-file, a lockfile, or anything under `vendor/`. If the generated output is genuinely wrong,
-the finding is against the **generator, template, or config** — never the emitted file. The
-exemption covers the comment rules only; a generated file committed where it should be
-gitignored is still a **[Hygiene]** finding.
-
-**1. Never propose adding a comment.** No reviewer, in any area, may file a finding whose
-fix is "add a comment", "add a doc comment", "document this method", or "explain this
-block". It is the most common junk finding this skill produces, and the language skills
-already forbid the code it asks for. If a hunk is genuinely unreadable, the finding is
-*rename it* / *split it* / *make the type say it* — never *narrate it*.
-
-**2. Flag the junk comments the diff adds.** A comment the change introduces is a defect
-when it:
-
-- restates the line below it (`// increment the counter` over `count++`);
-- narrates an obvious constructor, getter, setter, field, or const;
-- is a section banner (`// ---- helpers ----`) or a decorative divider;
-- talks about the change rather than the code (`// new in this PR`, `// was: X`, a TODO
-  about work this PR already finished);
-- is commented-out code.
-
-The **Quality** reviewer owns this — no other area reports it, so one junk comment
-produces one finding, not six. Default **P1**; P2 when the comment is merely redundant
-rather than actively distracting; **P0** when it is factually wrong about the code it
-sits on, because a lying comment is worse than no comment.
-
-A comment survives only when it carries what the code cannot: the **why** — a non-obvious
-constraint, a workaround with its reason or link, a spec rule the reader would otherwise
-break. Where a project mandates doc comments on an exported API, that project's skill
-wins; otherwise the loaded language skill is the authority on the exact rule.
+The default for any change is **zero comments**. **Never propose adding a comment** — no
+finding whose fix is "add a comment" / "add a doc comment" / "document this"; the fix for an
+unreadable hunk is *rename it* / *split it* / *make the type say it*. Only the **Quality**
+reviewer flags junk comments the diff adds. **Generated files are exempt** from every comment
+rule. Full rules, scope and priorities: `references/comments.md`.
 
 ## Project PR conventions (apply when the project defines them)
 
-Projects carry their own PR/commit rules in their **own** skills — this sadensmol skill
-owns none of those mechanics, it only requires that you **discover and enforce them**.
-After the routing pass, look for the project's PR/commit/branch rules. Examples of
-where they live:
+When a PR is attached, or in PR mode, discover the project's PR/commit/branch rules in its
+own skills and enforce them: title format, description shape, commit & branch hygiene.
+Report them under a **[Hygiene]** area on the same P0/P1/P2 scale. These findings are yours,
+not the workflow's. The checks, where the rules live, and the priority mapping:
+`references/pr-conventions.md`.
 
-- `<project>-linear` / `<project>-jira` — task/PR **title format** (e.g. an issue-key prefix) and the project's **description style**.
-- `<project>-task` — commit/PR shape (how many commits, how many PRs, the finish flow).
-- `<project>-<project>` (the dev skill) — living docs that must be updated in the same change, and any other repo-wide rule.
+## Full security audit (opt-in)
 
-Apply whatever the loaded project skills define:
-
-- **Title** — the PR title (and commit titles, where the project formats them) MUST match the project's format. Flag a mismatch.
-- **Description** — structure the PR body the way the project's skill prescribes; only fall back to the generic shape in PR-review step 4 when the project defines none.
-- **Commit & branch hygiene** — review the branch's *commits*, not just the squashed diff:
-  - **Up to date with base** — the branch is rebased on / not behind its base; no accidental base-merge commits when the project rebases. Note if a rebase is needed (`git log --oneline <base>..HEAD`, `git rev-list --count HEAD..<base>`).
-  - **No junk commits** — no leftover `wip`/`fixup`/duplicate/revert-your-own-change commits that should be squashed per the project's commit rule.
-  - **No stray files** — nothing committed that should be gitignored: build artifacts, generated code, IDE/ephemeral files, logs, secrets.
-  - **Message format** — each commit message follows the project's convention.
-
-Report these under a **[Hygiene]** area in the summary, on the same P0/P1/P2 scale
-(committed secret / broken base = P0; junk commits / wrong title format = P1; message
-nits = P2). These findings are yours, not the workflow's. When the project defines no
-such conventions, still apply the generic checks (junk commits, stray files) and skip
-the project-specific title/message-format checks.
+When the user asks for a full security audit or security test of the change ("full
+security", "security audit", "pen-test this change"), the Security area runs
+`security-audit` in its full audit mode, scoped to the change, instead of the two hunters.
+Never start it on your own; `task finish` never asks for it. How to run it and how its
+records become rows: `references/security.md`.
 
 ## Workflow
 
 ### 0. Choose review mode
 
-Before anything else, ask the user what to review (use `AskUserQuestion`):
+Before anything else, ask the user what to review (through `ask-user`). When the caller names the mode (`task finish` names Local), skip the question:
 
 - **Local** — review the current branch's local code changes. Even in Local mode you **always detect an attached PR** (`gh pr view --json number,title,url,body,baseRefName,commits`) — a PR attached to this code is never out of scope. If one exists, also run the PR-level checks (title/description per **Project PR conventions** + commit & branch hygiene) and surface them as findings. In Local mode you **report** those PR issues and **ask the user to fix them** — you do NOT `gh pr edit`/`gh pr comment` (that's PR mode).
 - **PR** — review a pull request. Detect the current branch's PR with `gh pr view --json number,title,url,body`. If one exists, use it. If none exists, ask the user to provide a PR link (or number).
 
-Then follow the matching path below. **Local** → the **Local review** section. **PR** → the **PR review** section.
+Then follow the matching path. **Local** → the **Local review** section below. **PR** → `references/pr-review.md`.
 
 ## Local review
 
@@ -201,9 +160,10 @@ inputs:
   "diffCmd":  "git diff <BASE>...HEAD",
   "branch":   "<current branch>",
   "commits":  "<git log <BASE>..HEAD --oneline output>",
-  "skills":   ["sadensmol-router", "<project>-router", "sadensmol-go-programming"],
-  "testSkills": ["sadensmol-go-integration-tests"],
-  "goal":     "<the stated goal of the change, if you know it — issue title, plan step, or user's words>"
+  "skills":   ["sadensmol-router", "<project>-router", "sadensmol-programming-go"],
+  "testReads": ["sadensmol-programming-go → references/integration-tests.md"],
+  "goal":     "<the stated goal of the change, if you know it — issue title, plan step, or user's words>",
+  "security": "review"
 }
 ```
 
@@ -223,12 +183,7 @@ findings, grouped by priority.
 
 **PRINT THE FINDINGS. ALWAYS. AS TABLES. (MUST FOLLOW)**
 
-The findings ARE the deliverable — running the reviewers and then describing
-them in prose is the single most common way this skill fails the user. A
-sentence like "the review found 1 P0 and 15 P1s, I fixed the ones that were
-mine" is **not** a report: the user cannot see what was found, cannot judge a
-verdict they never read, and cannot tell a finding you skipped from one that
-does not exist.
+The findings ARE the deliverable (why: `references/reporting.md`).
 
 So, before any commentary, any summary of what you fixed, and any question you
 ask the user:
@@ -245,6 +200,9 @@ ask the user:
   separate prose note.
 - A reviewer that came back `"failed": true` gets a line naming the area that
   did not run — a silent gap reads as "clean".
+- **The Security area adds its own sections below the tables**: a detail block per
+  Security row, the boundaries it covered, hardening notes, and what the verifier
+  rejected. Their shape: `references/security.md` → *Report*.
 
 Table shape (keep these columns, in this order):
 
@@ -261,11 +219,6 @@ Table shape (keep these columns, in this order):
 `Location` is `file:line` in backticks, file alone when the finding carries no
 line. Keep the title verbatim — do not rewrite it into your own words.
 
-When the run is large, generating the tables from the workflow's returned JSON
-beats retyping them: the return value is `{reports: [{area, findings: [...]}]}`,
-so a short script that sorts by `priority` and prints the rows cannot drop or
-paraphrase a finding the way hand-transcription does.
-
 **Then, and only then**, add the framing around the tables:
 
 **If any P0 findings exist**, open with a prominent blocker notice:
@@ -278,6 +231,8 @@ paraphrase a finding the way hand-transcription does.
 {P0 table}
 {P1 table}
 {P2 table}
+
+{Security sections}
 
 ### Linter
 {the Quality reviewer's linter output, or "No issues found"}
@@ -292,6 +247,8 @@ paraphrase a finding the way hand-transcription does.
 
 {P1 table}
 {P2 table}
+
+{Security sections}
 
 ### Linter
 {the Quality reviewer's linter output, or "No issues found"}
@@ -324,88 +281,19 @@ area, built from the same briefs — and the sections below format the result id
 
 ## PR review
 
-Reviews a pull request end to end. Same workflow, plus PR description management,
-posting the summary as a comment, and re-reviews.
+Mode-specific: read `references/pr-review.md` when the user chose **PR** in step 0.
 
-### 1. Load the platform skill
+## Read on demand
 
-If the PR is hosted on **GitHub**, invoke the `sadensmol-github` skill before doing anything else. (Other hosts: TBD — for now proceed with `gh`/generic tooling.)
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
 
-### 2. Detect first review vs re-review
-
-Fetch the PR body and existing review comments:
-
-```
-gh pr view <pr> --json number,title,url,body,headRefName,baseRefName
-gh pr view <pr> --comments
-```
-
-- **First review** — the description has no code-review summary and there are no prior review comments from this skill.
-- **Re-review** — the description already carries the summary (step 4) **and/or** there are prior review comments from this skill. Treat as re-review and follow step 7.
-
-### 3. Determine the diff commands
-
-Use the PR's own `baseRefName` as the base. The commands the reviewers will run are:
-
-- `filesCmd`: `gh pr diff <pr> --name-only`
-- `diffCmd`: `gh pr diff <pr>`
-
-Run `filesCmd` once yourself to derive the skill list, and grab the commit list
-(`gh pr view <pr> --json commits`) for context. Do **not** read the full diff into your
-own context.
-
-### 4. Ensure the PR title + description follow project conventions
-
-First apply the project's own rules (see **Project PR conventions**): verify the **PR title** matches the project's format (issue-key/type prefix) and fix it via `gh pr edit <pr> --title ...` if it doesn't; structure the **description** the way the project's skill prescribes. Only when the project defines no description convention, fall back to the generic shape below.
-
-The PR description must reflect **the idea of the PR** — what it changes, what feature it implements, or what bug it fixes — plus a short bullet list of the top-level changes (code, architecture, design, etc.).
-
-- If the description **already contains** an adequate summary (someone — possibly you on a previous run, or another agent/tool — already wrote it), leave it as is. Do not rewrite a good description.
-- If the description is **missing or inadequate**, write the summary from the diff and update the PR body via `gh pr edit <pr> --body ...`, preserving any existing content worth keeping.
-- On a **re-review**, the description will already have this — skip the update entirely.
-
-Summary shape:
-
-```
-## Summary
-<1–3 sentences: the idea of this PR — what it changes / the feature / the bug fixed>
-
-## Top-level changes
-- <change 1 (code / architecture / design / …)>
-- <change 2>
-- ...
-```
-
-### 5. Run the review workflow
-
-Fan out exactly as in Local review, with PR inputs: `filesCmd` / `diffCmd` from step 3,
-`branch` = `headRefName`, `commits` from the PR, `skills` / `testSkills` derived from the
-changed files, and `goal` from the PR title and description. Wait for every reviewer to
-finish before writing the report.
-
-### 6. Post the summary as a PR comment
-
-Build the same prioritized report as Local review step 3 (grouped P0/P1/P2, per-area prefixes, linter section), then post it as a PR comment via `gh pr comment <pr> --body ...`.
-
-**Approval suggestion:** if there are **no P0 findings**, add a line to the comment suggesting the PR is ready to approve — but **do not approve it yourself** (never run `gh pr review --approve`). If there are P0 findings, keep the BLOCKED notice instead.
-
-### 7. Re-review: address prior comments
-
-When step 2 detected a re-review:
-
-- Read the previous review comments from this skill.
-- Check the new diff against them: for each prior finding, verify whether it was actually fixed — confirm the fix is real and correct, not just superficially touched. Flag fixes that are wrong, incomplete, or that introduced new problems.
-- Run the workflow on the current diff (step 5) to catch newly introduced issues. Put the prior findings in `goal` context so the reviewers know what was supposed to be fixed.
-- Post a new comment (step 6) that: (a) states which prior findings are resolved vs still open, and (b) lists any new findings. Apply the same no-P0 → suggest-approve / P0 → BLOCKED logic.
-
-## Common mistakes
-
-| Mistake | Why it hurts |
-|---------|--------------|
-| Inlining the diff into the agent prompts | Sends the diff 7× and overflows on a large branch. Pass `diffCmd`. |
-| Hardcoding `main` as the base | Repos on `master`/`develop` silently produce an empty or wrong diff. Resolve the base. |
-| Letting each reviewer re-derive the skill list | Six duplicated routing passes. Derive once, pass it in. |
-| Reporting CRITICAL/IMPORTANT/SUGGESTED | The scale is P0/P1/P2. Nothing else is a priority. |
-| Dropping a reviewer that returned `failed` | A silent gap reads as "clean". Name the area that did not run. |
-| Filing "add a doc comment" as a finding | The language skills forbid the comment. The fix for an unreadable hunk is a better name, not a sentence about it. |
-| Reviewing in your own context instead of fanning out | One context cannot hold six concerns and the diff. Dispatch. |
+| When | Read |
+|------|------|
+| You are in Claude Code, before the fan-out | `references/dispatch-claude-code.md` |
+| You are in OpenCode, before the fan-out | `references/dispatch-opencode.md` |
+| You judge, decline or file a comment finding | `references/comments.md` |
+| A PR is attached (Local step 1b) or you are in PR mode | `references/pr-conventions.md` |
+| The user chose **PR** in step 0 | `references/pr-review.md` |
+| You assemble a large report, or check the common mistakes | `references/reporting.md` |
+| You render the Security sections, or the user asked for a full security audit | `references/security.md` |

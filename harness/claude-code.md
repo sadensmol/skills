@@ -4,7 +4,7 @@ You are in Claude Code. This file answers the capability contract in `harness/RE
 
 ## load-skill
 
-The `Skill` tool, with the skill's flat id: `Skill(sadensmol-go-programming)`. Reading the
+The `Skill` tool, with the skill's flat id: `Skill(sadensmol-programming-go)`. Reading the
 `SKILL.md` file instead does not count — the skill must be invoked.
 
 Do not invoke a skill whose full instructions are already present in the current context.
@@ -40,6 +40,11 @@ Chrome, WebFetch, `curl` or another browser.
 `Bash` with `run_in_background: true`. It keeps running across turns and re-invokes you when
 it exits, so never poll it with `sleep`. Collect output with `TaskOutput`, wait on a
 condition with `Monitor`, and kill it with `TaskStop`.
+
+`Bash` runs zsh. Quote every word that starts with `=` or holds a glob (`echo '==='`,
+`--include='*.go'`): unquoted, `===` fails with `=== not found`, and `--include=*.go` fails
+with `no matches found`, so a search returns nothing without an error. macOS has no GNU `timeout`:
+use the tool's `timeout` parameter. In zsh, `cmd 2>&1 >/dev/null | x` also sends stdout into the pipe.
 
 ## spawn-subagent
 
@@ -93,6 +98,21 @@ pending agent's result, and never poll for it.
 
 `isolation: "worktree"` on an `Agent` call gives that agent its own git worktree, cleaned up
 automatically if unchanged. `EnterWorktree` / `ExitWorktree` move the session itself.
+
+## session-transcript
+
+The JSONL file of this session, found by its id only:
+
+```bash
+ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$CLAUDE_CODE_SESSION_ID".jsonl
+```
+
+- Never take the newest file, and never build the path from the cwd.
+- `CLAUDE_CODE_SESSION_ID` unset, no file, or more than one file → a blocker: say so and
+  stop.
+- Check that the `sessionId` of its records is that id.
+- A `parentUuid` chain that stops at a parent missing from the file → the result is
+  partial: mark it so.
 
 ## Also here, with no OpenCode equivalent
 

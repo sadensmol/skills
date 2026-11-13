@@ -96,33 +96,11 @@ When a user mentions an issue key, fetch it first:
 3. Show the JSON body and review with the user
 4. `POST /rest/api/2/issue`
 
-**Follow-up / related tickets created during a task (MUST FOLLOW):** when the
-session works on a ticket (the *origin*: the key the user named, or the
-`<KEY>-<n>` prefix of the branch) and you create a ticket from that work — a
-follow-up, a deferred review finding, a bug found on the way, a split-off part:
-
-1. **Fetch the origin first:**
-   `curl "${J[@]}" "$JIRA_BASE_URL/rest/api/2/issue/ORIGIN?fields=summary,issuetype,parent,project"`.
-2. **Assign it to the current user.** Take `accountId` from `/rest/api/2/myself`
-   and set `"assignee":{"accountId":"<id>"}` in the create body. Never leave it
-   unassigned, and never assign it to the origin's assignee instead.
-3. **Same parent as the origin.** When the origin has `fields.parent`, set
-   `"parent":{"key":"<origin parent key>"}` in the create body, so the new ticket
-   sits under the same story/epic. When the origin is itself a sub-task, create
-   the new ticket as a sub-task of that same parent. No parent on the origin →
-   no parent on the new ticket; never invent one.
-4. **Link it to the origin** in the same create body — `Relates` by default,
-   `Blocks` when one really blocks the other:
-   `"update":{"issuelinks":[{"add":{"type":{"name":"Relates"},"outwardIssue":{"key":"ORIGIN"}}}]}`.
-   Link any other ticket the new one depends on or duplicates the same way.
-5. **Give the context a reader needs** in the description: the origin key and
-   why this ticket split off from it, where the problem is (`repo/path:line`,
-   PR, failing test or log line), what was already found, and what "done" means.
-   The ticket must make sense to someone who never saw the session.
-6. After creating it, re-fetch it and check `assignee`, `parent` and
-   `issuelinks`. Then report the new key with its link.
-
-The normal rule still holds: show the JSON body to the user before the POST.
+**Follow-up / related tickets created during a task (MUST FOLLOW):** when you create
+a ticket from work on an origin ticket, fetch the origin first, assign the new ticket to
+the current user, give it the origin's parent, link it to the origin, give the context a
+reader needs, then re-fetch and verify. Read `references/follow-up-tickets.md` for the
+full steps and JSON before you create such a ticket.
 
 **Updating tickets:**
 1. Fetch issue details first
@@ -173,64 +151,24 @@ The normal rule still holds: show the JSON body to the user before the POST.
 
 ## First-Time Setup
 
-When `missing jira env`, print the complete instruction below in one message.
+When the Backend check prints `missing JIRA_API_TOKEN`, read `references/setup.md` and
+print its complete instruction in one message.
 **Secrets live in `~/.profile` and are added by the USER, never by Claude** —
 never write, echo, or edit a token, never print `$JIRA_API_TOKEN`, never put it
 in a repo file.
 
-### Creating a Jira API token (Cloud)
+---
 
-1. Sign in to Atlassian, then open
-   **https://id.atlassian.com/manage-profile/security/api-tokens**
-   (Atlassian account → Security → "Create and manage API tokens").
-2. Click **Create API token**. (For scoped tokens, choose "Create API token
-   with scopes" and grant Jira read/write — classic unscoped tokens work too.)
-3. Give it a label (e.g. `claude-cli`) and an expiry, click **Create**.
-4. **Copy the token immediately** — Atlassian shows it only once. If lost,
-   revoke it and create a new one.
-5. Put it in `~/.profile` yourself as `JIRA_API_TOKEN` (see below). It pairs
-   with your account email for HTTP Basic auth (`email:token`).
+## Read on demand
 
-> Jira **Server / Data Center** (self-hosted) has no id.atlassian.com — create a
-> **Personal Access Token** under your Jira profile → Personal Access Tokens,
-> and it's sent as a Bearer header instead of basic auth (see `references/rest.md`).
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
 
-```
-Jira works with zero installs — I'll call the Jira Cloud REST API with curl
-(already on your Mac). One-time setup:
-
-1. Create an API token (Jira Cloud) — see "Creating a Jira API token" above:
-     https://id.atlassian.com/manage-profile/security/api-tokens
-   (Jira Server/DC: create a Personal Access Token in your profile instead.)
-
-2. Add these to ~/.profile YOURSELF (I must never see or write the token):
-     export JIRA_BASE_URL="https://<yourorg>.atlassian.net"   # no trailing slash
-     export JIRA_EMAIL="you@example.com"
-     export JIRA_API_TOKEN="<paste your token>"
-
-   Your shell is zsh, which does NOT read ~/.profile by default. Add this
-   line to ~/.zprofile so the vars load in new terminals:
-     [ -f ~/.profile ] && . ~/.profile
-
-3. Apply to the CURRENT terminal:
-     source ~/.profile
-
-4. Tell me when done — I'll verify with:
-     curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "$JIRA_BASE_URL/rest/api/2/myself"
-```
-
-After the user confirms, re-run the Backend check, then hit
-`/rest/api/2/myself`. A 200 with the account = ready; a 401/403 = fix
-email/token/scopes. Then continue with the user's original request.
-
-**Env vars won't appear in an already-running Claude session.** This process's
-env was captured at launch, so `source ~/.profile` in an interactive `!` shell
-updates *that* shell, not Claude's Bash tool. If the vars still read as missing
-after setup, the user must restart the Claude session (or export them in the
-environment Claude was launched from).
-
-> Jira Server / Data Center (self-hosted, not Cloud) uses a Personal Access
-> Token as a Bearer header instead of basic auth — see `references/rest.md`.
+| When | Read |
+|---|---|
+| The Backend check prints `missing JIRA_API_TOKEN` | `references/setup.md` |
+| You create a ticket from work on another ticket | `references/follow-up-tickets.md` |
+| Complex create, JQL, transitions, assignment, sprints, or auth/4xx errors | `references/rest.md` (see *Deep Dive*) |
 
 ---
 

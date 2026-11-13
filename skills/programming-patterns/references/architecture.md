@@ -1,7 +1,7 @@
 # Architectural Patterns
 
 Patterns for how components and boundaries inside a service fit together.
-Service topology, deployment, and scaling belong to `sadensmol-system-design`.
+Service topology, deployment, and scaling belong to `sadensmol-programming-system-design`.
 
 Announce and get approval before applying any of these (see SKILL.md gate) —
 these are the most expensive patterns to reverse.
@@ -192,4 +192,4 @@ Reversibility is the real decision criterion. Prefer the top of this table.
 
 For anything in the bottom four rows, write down the alternative that was
 rejected and why, and get explicit approval. An ADR is worth it there
-(`sadensmol-system-design` has the template).
+(`sadensmol-programming-system-design` has the template).

@@ -35,6 +35,9 @@ Not now, not "temporarily", not in an example.
 
 ## 2. No project-specific knowledge in `skills/`, `agents/`, `commands/`, `harness/` or `plugin/`
 
+The full layer model — dependency direction, hooks, where a rule goes, how a project skill
+pairs with a generic one — is the `sadensmol-sadensmol` skill. Load it before any skill edit.
+
 A `sadensmol-` skill is the **generic layer**. It must not contain:
 
 - Project, company, product, repo, or service names.

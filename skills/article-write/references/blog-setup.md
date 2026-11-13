@@ -30,7 +30,6 @@ tags = ['tag1', 'tag2']
 - `draft` - set to `true` or `false`
 - `description` - keep concise, describes the core takeaway
 - `tags` - lowercase, common tags: `go`, `golang`, `java`, `kotlin`, `grpc`, `microservices`, `clean-architecture`, `solid`
-- `medium_url` - add later if cross-posted to Medium
 
 ## Images
 - Store in: `/static/images/posts/`
@@ -38,7 +37,7 @@ tags = ['tag1', 'tag2']
 - Formats: PNG, JPEG
 - Hero images: every article should have one — a real photograph (not generated), placed after the opening paragraph
 - All images are auto-centered via CSS (`display: block; margin: auto`)
-- Dark theme auto-inverts only PNG images (`img[src$=".png"]`) via CSS `filter: invert(0.88) hue-rotate(180deg)` — so diagrams (PNG) are readable on dark theme, while hero photos (JPG) keep natural colors. Always save diagrams as `.png` and photos as `.jpg`
+- Dark theme auto-inverts only PNG images (`img[src$=".png"]`) via CSS `filter: invert(0.88) hue-rotate(180deg)` — so diagrams (PNG) are readable on dark theme, while hero photos (JPG) keep natural colors. Save monochrome diagrams as `.png`, colored diagrams as `.jpg` (to skip the inversion), and photos as `.jpg`
 
 ## File Naming Convention
 `YYYY-MM-DD-slug-words-here.md`
@@ -52,4 +51,6 @@ make up  # starts hugo server with drafts enabled
 ```
 
 ## Existing Tags (for consistency)
-go, golang, java, kotlin, spring-boot, clean-architecture, grpc, microservices, solid, dependency-injection, immutability, money, rate-limiting, closures, interfaces, exception, system-design, http, networking, security, web, gaming
+ai, analytics, authentication, backup, clean-architecture, clickhouse, closures, cloud-native, database, dependency-injection, devops, encryption, exception, gaming, go, golang, grpc, http, immutability, interfaces, java, kotlin, kubernetes, llm, microservices, money, mongodb, networking, opinion, postgresql, rag, rate-limiting, security, software-development, solid, spring-boot, sqlite, system-design, vector-database, web, webrtc
+
+This list goes stale. Before suggesting tags, list the current ones from the blog's `content/posts/*.md` frontmatter.

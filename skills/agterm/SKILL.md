@@ -13,6 +13,10 @@ when_to_use: >
   show an image inline, show this HTML page or artifact, make an HTML page or explainer for this and show
   it, make a page that switches sessions or returns a choice, preview the report you generated, show this
   URL or the running dev server, keep me logged in to a page shown in an overlay, search the scrollback,
+  flag every session in a workspace, tint a session or workspace row a color, make a companion session,
+  keep a related program next to a session, duplicate this session with its programs as a companion,
+  show a page as a companion of this session, fold a session's companions, ask the user to type a value,
+  hide the overlay for a moment, wait until that worker session finishes,
   run my custom command, tell me when the selected session changes, bring back the session I just closed,
   copy this to the clipboard, was agterm upgraded under the running app, upgrade agterm without losing sessions,
   what's new in agterm, update the agterm skill, attach a session from another Mac, what recipes are there,
@@ -49,19 +53,12 @@ the control channel is available:
   the `ghostty` pair embedded libghostty would set. A tool that decides a capability from a list of
   terminal names (Claude Code's OSC 8 hyperlinks) needs its own override; see troubleshooting.md.
 
-The quick terminal is scratch (not in the tree) and belongs to no window, so of the `AGTERM_*` variables
-it only gets `AGTERM_ENABLED` and `AGTERM_SOCKET` (no session/workspace/window ids). An untargeted `agtermctl` run
-from it therefore resolves the active window like any other caller.
-
-These variables are inherited by every process the session's shell spawns — including long-lived
-daemons that outlive the shell. A screen server, a session manager (agent-deck and the like), or
-any background service started from inside a session captures the spawning session's `AGTERM_*` and
-passes it to every child it ever creates, so status hooks running in those children resolve
-`$AGTERM_SESSION_ID` to the session that happened to start the daemon and report to the WRONG session.
-Before starting such a process from inside agterm, scrub the variables
-(`env -u AGTERM_ENABLED -u AGTERM_PANE -u AGTERM_PANE_ID -u AGTERM_SESSION_ID -u AGTERM_SOCKET -u AGTERM_WINDOW_ID -u AGTERM_WORKSPACE_ID <cmd>`);
-see troubleshooting.md ("agent-status glyph updates the wrong session") for diagnosing and fixing an
-already-poisoned daemon.
+Every process the session's shell spawns inherits these variables, long-lived daemons included.
+**Before starting a daemon, screen server or session manager from inside agterm, scrub them**
+(`env -u AGTERM_ENABLED -u AGTERM_PANE -u AGTERM_PANE_ID -u AGTERM_SESSION_ID -u AGTERM_SOCKET -u AGTERM_WINDOW_ID -u AGTERM_WORKSPACE_ID <cmd>`),
+or its children report to the WRONG session. Read `references/inherited-env.md` for the full rule and for
+the quick terminal's reduced variable set. Claude Code background sessions (`claude --bg`) get none of the
+variables; troubleshooting.md ("Claude Code background sessions have no status") passes them in through `--settings`.
 
 ## Running agtermctl
 
@@ -75,8 +72,8 @@ is not on PATH, the user can install it, or you invoke it by absolute path.
 - Add `--json` to any command to get the raw JSON response (machine-readable). Without it, ordinary
   mutations print `ok`, batch close/move prints the affected session count, and `tree`/`list` print a
   human listing.
-- Commands other than `events` make one request per invocation. `events` polls with a fresh connection
-  for each request. Mutating commands return the affected/new id; batch session mutations return the
+- Commands other than `events` and `session wait` make one request per invocation. Those two poll with a
+  fresh connection for each request. Mutating commands return the affected/new id; batch session mutations return the
   number actually changed. Create commands (`session new`, `session duplicate`, `workspace new`,
   `window new`) print the new id.
 
@@ -88,7 +85,7 @@ have: a **split** pane (a second shell side by side), a **scratch** terminal (a 
 shell, toggled like the split), and an ephemeral **overlay** (runs one program on top, then vanishes).
 An overlay covers the whole session, or with `--pane left|right` exactly one split pane, leaving
 the sibling pane visible and usable. `--html FILE` / `--url URL` puts a web page there instead of a
-program (see "Displaying an HTML page" below). The same session-wide slot also holds a **HUD**
+program (read `references/html-pages.md`). The same session-wide slot also holds a **HUD**
 (`session hud`), a small passive panel carrying a message instead of a program. A HUD can use the
 whole session or one pane as its placement bounds. The session keeps focus and stays typable
 under it.
@@ -128,7 +125,7 @@ you open overlays / type into whatever the user has selected, not your own sessi
 
 **Settings ▸ General ▸ Restore sessions** (global, applies after restarting agterm) picks **Fresh shells**,
 **Re-run commands**, or **Live sessions** (primary and split panes run through zmx and reattach to the
-same process; needs zsh as the login shell). **Before reasoning about what survives a quit, restart or
+same process; needs zsh or fish as the login shell). **Before reasoning about what survives a quit, restart or
 crash** — capture, the cases that fall back to a fresh shell, `backedByZmx`, reattach limits — read the
 `## restore modes` section of `reference.md`.
 
@@ -166,18 +163,20 @@ installable community workflows in `cookbook.md`.
 
 - **tree** (`## tree`) — `tree [--json]`: per-session panes, `foreground` argv, status, split / overlay /
   HUD / ask state, `surfaces`; top-level window state (`idleMs`, `sidebar*`, `quickVisible`,
-  `zoomedSurface`, `dashboard*`, `pickPending`, `askPending`, `app`).
+  `zoomedSurface`, `dashboard*`, `pickPending`, `askPending`, `app`, `flaggedOrder`, `attention*`); per-node
+  `parent`/`collapsed`/`content` (companions), `tint`/`tintOn`, `lastSelectedAt`.
 - **events** (`## events`) — `events [--json] [--kind …] [--run RUN --after SEQ] [--limit N]`: status,
-  notify, `session.created`/`closed`/`selected`, `tree.changed`, `pane.split`/`pane.scratch`,
+  notify, `session.created`/`closed`/`selected`, `tree.changed`, `pane.split`/`pane.scratch`/`pane.focused`,
   `remote.opened`/`closed`, `app.launched`. No terminal-output stream.
-- **workspace** (`## workspace`) — `new [--collapsed]`, `rename`, `delete`, `select`, `go`, `move`,
-  `focus`, `filter`, `collapse`, `expand`.
+- **workspace** (`## workspace`) — `new [--collapsed] [--tint C]`, `rename`, `delete`, `select`, `go`, `move`,
+  `focus`, `filter`, `flag` (every session of the workspace), `tint` (its own row only), `collapse`, `expand`.
 - **session** (`## session`) — `new` (`--command`, `--wait`, `--name`, `--after`/`--before`,
-  `--no-select`), `duplicate`, `close`, `select`, `rename`, `reveal`, `go`, `move`, `type`, `copy`,
+  `--no-select`, `--tint`/`--tint-on`, `--parent SID` for a companion), `duplicate` (`--companion` copies each
+  pane's program), `collapse`/`expand` (fold a parent's companions), `close` (`--undoable`: ⌘W's undo grace), `select`, `rename`, `reveal`, `go`, `move`, `type`, `copy`,
   `paste`, `select-all`, `text`, `search`, `split`, `swap`, `scratch`, `focus`, `resize`, `status`,
-  `flag`, `context`, `seen`, `restore`, `restart --pane-id ID [--command LINE]` (start a pane's program
+  `wait --until STATUS` (block until the agent status matches), `flag` (`move --before|--after` reorders), `tint`, `context`, `seen`, `restore`, `restart --pane-id ID [--command LINE]` (start a pane's program
   over in place), `lead`, `background` (`--pane` per-pane override), `overlay` (`open` a program,
-  `--html FILE` or `--url URL`; `resize`/`reload`/`navigate`/`submit`/`close`/`result`/`copy`/`text`),
+  `--html FILE` or `--url URL`, `--companion` for a page companion row, `--width`/`--height` in points; `resize`/`reload`/`navigate`/`submit`/`close`/`result`/`copy`/`text`/`hide`/`show`/`toggle`),
   `hud` (`open`/`update`/`close`, `--hide-after SECONDS`, `--sticky`/`--no-frame` for an edge caption).
 - **window** (`## window`) — `new`, `list`, `select`, `go`, `close`, `rename`, `delete`, `resize`,
   `move`, `zoom`, `fullscreen`, `minimize`.
@@ -186,7 +185,7 @@ installable community workflows in `cookbook.md`.
   `--auto-size`.
 - **pick** (`## pick`) — native fuzzy picker over stdin choices; `--select ID`, `--no-block`,
   `pick result`/`cancel`.
-- **ask** (`## ask`) — `ask TITLE --button ID=LABEL …`, `--style terminal|gui`, `--no-block`,
+- **ask** (`## ask`) — `ask TITLE --button ID=LABEL …`, `--input line|multiline`, `--choice ID=LABEL`, `--style terminal|gui`, `--no-block`,
   `ask result`/`cancel`.
 - **quick** (`## quick`) — `quick show|hide|toggle`, `quick type`, `quick text`.
 - **sidebar** (`## sidebar`) — show/hide/toggle, `mode`, `flagged-layout`, `expand`, `collapse`, `width`.
@@ -197,8 +196,8 @@ installable community workflows in `cookbook.md`.
   (start a user custom command; the reply means it started, not that it succeeded).
 - **clipboard** (`## clipboard`) — `clipboard set [TEXT]` (stdin when omitted): set the clipboard of the terminal showing
   the pane. `session copy` does NOT touch the clipboard.
-- **browser** (`## browser`) — `browser clear` (drop `--persistent` page logins), `browser links [browser|overlay]`
-  (where a clicked terminal link opens).
+- **browser** (`## browser`) — `browser clear` (drop `--persistent` page logins), `browser links [browser|overlay|overlay95|overlay75|overlay50]`
+  (where a clicked terminal link opens, full overlay or a 95/75/50% panel).
 - **recent** (`## recent`) — `recent list`, `recent open [ID]` (reopen a closed session or workspace), `recent clear`.
 - **hooks** (`## hooks`) — `hooks reload`, `hooks list`: `hooks.conf` lines `on <kind> <shell...>` run on
   events, with the event JSON on stdin and `AGT_EVENT_*` / `AGT_SESSION_ID` / `AGT_SOCKET` in the env.
@@ -213,89 +212,23 @@ installable community workflows in `cookbook.md`.
   on disk; they differ after an upgrade under the running app); pass `--socket "$AGTERM_SOCKET"` (or `"$AGT_SOCKET"` in a
   keymap child), since a bare call may answer for another app.
 
-## Displaying an HTML page
-
-To show the user a page you generated (explainer, report, chart, diagram), write a static HTML file and
-open it in your own session's overlay. Page JavaScript is off unless you pass `--js`. Without `--cwd`
-the page has no file access, so keep it self-contained (inline CSS, inline SVG, data URIs).
-
-```bash
-agtermctl session overlay open --html <file> --target "$AGTERM_SESSION_ID" --follow --socket "$AGTERM_SOCKET"
-agtermctl session overlay reload --target "$AGTERM_SESSION_ID" --socket "$AGTERM_SOCKET"   # after rewriting it
-agtermctl session overlay open --url http://localhost:5173/ --js --target "$AGTERM_SESSION_ID" --follow --socket "$AGTERM_SOCKET"
-```
-
-A `--url` page forgets cookies on close; `--persistent` keeps logins across closes and restarts. Leave
-the page up; the user closes it with ⌘W. Style it from the theme variables the page receives
-(`--agterm-background`, `--agterm-foreground`, `--agterm-color-0`..`15`) with fallbacks, and never
-declare `--agterm-*` yourself. Check load state in `tree --json --window "$AGTERM_WINDOW_ID"` under
-`htmlOverlays`. **Before using `--cwd`, `--navigation`, `--size-percent`, `--pane`, or a `--url` page,
-read `session overlay open --html` in `reference.md`.** Outside agterm, `open <file>` is the fallback.
-
-**Interactive pages.** A file page can run agterm commands without JavaScript: tag a button or form with
-`data-agterm="<socket command>"` (e.g. `session.select`, `session.rename`, `session.overlay.close`), plus
-`data-agterm-target`, `data-agterm-args` (JSON) and `data-agterm-into="#id"` for the reply. Untargeted
-commands act on the page's own session. To get a choice back, open with `--block` and use
-`session.overlay.submit` buttons; stdout is `{"outcome":"submitted","value":…}`, exit 2 means dismissed.
-With `--js`, `agterm.request(cmd, {target, args})` returns the reply as a promise. Escape any outside text
-you put in such a page: the page can run commands. **Read `session overlay submit` in `reference.md`
-before building one.** `--url` pages get none of this.
-
-## Displaying an image inline
-
-This skill bundles `scripts/show-image.sh`. It opens an overlay (a real terminal) and renders the
-image there via the kitty graphics protocol, which ghostty draws natively — no kitty binary and no
-external image tool, just `base64` + `printf`. Run it with the image path (optional size percent,
-default 60):
-
-The script sits next to this file, so resolve `scripts/show-image.sh` against the directory this
-`SKILL.md` was loaded from — not against your working directory. That one form is correct wherever
-the skill came from: a plugin install (`~/.claude/plugins/cache/…`, `~/.codex/plugins/cache/…`) or the
-app's own **Help ▸ Install Agent Skill…** copy (`~/.claude/skills/agterm/`, `~/.codex/skills/agterm/`).
-
-```bash
-bash <this-skill-directory>/scripts/show-image.sh <image> [size-percent]
-```
-
-The size percent sizes the overlay PANEL; the image itself is scaled to fit that panel and centered
-in it, so a large screenshot needs no resizing beforehand.
-
-Do NOT print graphics escapes to your own tool stdout (the agent harness escapes the control bytes)
-and do NOT run an image viewer in your tool shell (no controlling terminal). The overlay is what makes
-it render. Outside agterm (`AGTERM_ENABLED` unset) there is no overlay — fall back to `open <image>`.
-
-## Long-command status wrapper (`agst`)
-
-This skill bundles `scripts/agst.sh`, the cookbook's `long-commands-status` wrapper, so nothing is
-copied to `~/bin`. It sets the session's row `active` while a command runs, then `completed` on exit 0
-or `blocked` on non-zero; the exit code passes through, and outside agterm it just `exec`s the command.
-Resolve it against this skill's directory, physically (`pwd -P`), and call it through `sh`:
-
-```bash
-AGST="$(cd <this-skill-directory> && pwd -P)/scripts/agst.sh"
-sh "$AGST" make test
-agtermctl session new … --command "zsh -lc 'sh \"$AGST\" task dev'"
-```
-
-`whats-new.md` step 2 refreshes it when the recipe changes upstream.
-
 ## Troubleshooting and reporting
 
 When the user hits a problem (a keymap editor that will not open, a custom action that does nothing,
-notifications missing), diagnose it from inside the session first: inspect `agtermctl tree --json`,
-run `agtermctl keymap reload` for the parse-diagnostic count, and read the unified logs under
-subsystem `com.umputun.agterm`. If it turns out to be a bug, offer to help file it.
-
+notifications missing) or wants to report one, read **troubleshooting.md** first.
 **Filing is opt-in and draft-first.** Never run a `gh` command without the user's explicit approval.
-Decide first whether it is a bug (a supported feature misbehaving → a GitHub **issue**) or something
-not supported / a question / an idea (→ a GitHub **Discussion**, category `Ideas` or `Q&A`). Draft the
-title and body, show it to the user, scrub anything private (tokens, hostnames, usernames in paths,
-selection/clipboard text), and only post after an explicit go-ahead. If `gh` is missing or not
-authenticated, hand the user the prefilled text plus the new-issue / new-discussion URL instead.
 
-Full detail, templates, and the exact `gh` commands are in **troubleshooting.md**.
+## Read on demand
 
-## Reference files
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
+
+- **references/html-pages.md** — read before you open an HTML page or URL in an overlay (an explainer,
+  report, chart, diagram, a PDF, dev server), or build an interactive page that runs commands or returns a choice.
+- **references/bundled-scripts.md** — read before you show an image inline (`scripts/show-image.sh`) or
+  wrap a long command so the session row shows its status (`scripts/agst.sh`).
+- **references/inherited-env.md** — read before you start a daemon or session manager from inside a
+  session, or when you run from the quick terminal.
 
 - **whats-new.md** — run it for "what's new in agterm" or "update the agterm skill": sync this skill from
   the app's bundle, check the cookbook for new recipes, refresh the bundled `scripts/agst.sh`, and map
@@ -311,6 +244,6 @@ Full detail, templates, and the exact `gh` commands are in **troubleshooting.md*
   one as reference for a tricky workflow. The recipe list lives in the repo, not here; fetch it.
 - **troubleshooting.md** — diagnosing common problems (keymap editor, custom actions, logs) and the
   bug-issue / feature-Discussion reporting workflow (draft-first, scrub, never post without approval).
-- **scripts/show-image.sh** — bundled helper that displays an image inline in an overlay (see above).
+- **scripts/show-image.sh** — bundled helper that displays an image inline in an overlay (see `references/bundled-scripts.md`).
 
 Read those files when you need exact flags, return shapes, or worked examples.

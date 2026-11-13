@@ -10,9 +10,13 @@ project has one. This skill fills the gaps.
 
 ## Read on demand
 
+**When a trigger below matches what you are about to do, read that file first** — before
+you write, review or answer. The summary in this skill is not the full rule.
+
 | When you… | Read |
 |---|---|
-| create, change or drop an index, read a plan, or fix a slow query | `references/indexes.md` |
+| write, review or optimize a SQL query or query-builder code, or send a query to a read replica | `references/queries.md` |
+| create, change or drop an index, read a plan, fix a slow query, or prove a performance change | `references/indexes.md` |
 | write any migration (DDL, backfill, constraint, type change), or rename, split, move or change the type or unit of existing data | `references/migrations.md` — a change that old code cannot read or write follows its three-phase data migration |
 | partition a table, query a partitioned table, add an FK to one, or touch pg_partman | `references/partitioning.md` |
 
@@ -37,7 +41,12 @@ project has one. This skill fills the gaps.
 
 ## Schema design
 
-- Every table has a primary key. Prefer `uuid`. For a new key, prefer a time-ordered
+- Give every table a primary key. Use existing columns, including a composite key, when
+  they uniquely identify each row and no foreign key or application code needs a separate
+  ID. Do not add an unused surrogate `id`.
+- A key with a nullable column cannot be a PK. Use a unique index instead: one
+  `nulls not distinct` index (PostgreSQL 15+) or partial unique indexes.
+- When a surrogate key is needed, prefer `uuid`. For a new key, prefer a time-ordered
   UUIDv7 (`uuidv7()` on PostgreSQL 18+, or generate it in the app). It keeps the PK B-tree
   dense. Use UUIDv4 when the id is public and must not reveal its creation time.
 - For an integer key, use `generated always as identity`, never `serial`.
@@ -71,30 +80,6 @@ project has one. This skill fills the gaps.
 - Do not use `timestamptz(0)`. It rounds, so a value can land up to half a second in the
   future. Use `date_trunc('second', …)`.
 
-## Queries
-
-- Select only the columns you use. Every extra column that is not in the index costs one
-  heap fetch per row.
-- Use half-open ranges for time: `created_at >= $from and created_at < $to`. Do not use
-  `BETWEEN` on timestamps, because it includes both ends.
-- Use `NOT EXISTS`, not `NOT IN (subquery)`. A NULL in the list makes `NOT IN` return no rows.
-- A `LIMIT` needs an `ORDER BY` that gives a unique order. Add the PK as the last sort key.
-- Paginate deep lists with a keyset, not `OFFSET`:
-  `where (created_at, id) < ($last_created_at, $last_id) order by created_at desc, id desc limit $n`.
-  `OFFSET` reads and drops every skipped row, and rows move between pages under inserts.
-- An `EXISTS` inside an `OR` runs once per row as a SubPlan. Postgres turns a sublink into
-  a semi join or an anti join only when it is a top-level `AND` term. Split the `OR` into
-  disjoint branches joined by `UNION ALL`, and put `ORDER BY`/`LIMIT` outside the union.
-- A claim or one-shot transition is one conditional `UPDATE`:
-  `update … set token = $t where id = $id and token is null`. Check the affected row
-  count. Zero rows means another caller won. Do not read and then write.
-- Make writes idempotent with a natural unique key and `insert … on conflict (…) do …`.
-  A retry must reuse the stored row's key values, including the partition key.
-- A query builder that binds every constant as a parameter can break plans. An index
-  expression only matches when the query repeats it exactly, with the constant inlined.
-  A bound parameter in a select list can also get the type `text`.
-- Use `jsonb` operators that an index supports (`@>`, `?`) when the column is indexed.
-
 ## Transactions and locking
 
 - Hold a transaction only around the writes. Do reads, CPU work and independent lookups
@@ -113,23 +98,3 @@ project has one. This skill fills the gaps.
   app role. A query with no timeout holds its locks for as long as it runs.
 - A client that disconnects cancels its request context, and the driver then rolls back
   the open transaction. Treat that as normal traffic, not as a database error.
-
-## Read replicas
-
-- Send background polls, reports and read-only aggregates that tolerate lag to the read
-  replica. Keep writes and read-after-write paths on the primary.
-- When one component reads and writes, give it two repositories: one on the reader and one
-  on the writer.
-- You cannot add an index to a physical replica only. An index built on the primary exists
-  on every replica.
-- Dev and staging often point the reader at the writer. Replica lag then shows up only in
-  production.
-
-## Verifying a change
-
-- Prove a performance change with `EXPLAIN (ANALYZE, BUFFERS)` on realistic data, run
-  after `ANALYZE`. Compare buffers, not only milliseconds.
-- A semantic test cannot see a plan regression. For a query that must use an index or must
-  prune partitions, add a test that runs `EXPLAIN` and asserts on the plan.
-- Read the slow-query plans that the server logs (`auto_explain`,
-  `log_min_duration_statement`) before you guess at a cause.

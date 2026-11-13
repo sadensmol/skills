@@ -1,4 +1,4 @@
-# Running infra — ONE standalone agterm session, ONE test run against it
+# Running infra — ONE companion agterm session, ONE test run against it
 
 Read this before the main session brings up a local stack. The project skill adds its
 own stack commands, ports and teardown command.
@@ -16,7 +16,7 @@ does not apply in a task worktree: when the stack a test needs is down, the main
 starts it itself per this file. The gates below still hold — the runtime check (0a), the
 lock (0), the health check, and asking first for anything destructive or shared.
 
-The shape: the **stack** runs in its own agterm session; the **test** runs from the
+The shape: the **stack** runs in its own companion session; the **test** runs from the
 main session (a `run-background-shell` call) or a session branch, pointed at it; never
 the suite inside the infra session, never the stack inside the main session.
 
@@ -45,8 +45,8 @@ neither test run works. The lock makes the
 second attempt fail loudly.
 
 The lock is a directory at the worktree base — outside every repo, so never committed,
-and visible to every lane of the task. `$root`, `$b`, `$WT` come from SKILL.md →
-*Worktree helpers* (no worktree → no lock, no stack). Scan sibling worktrees first (only
+and visible to every lane of the task. `$root`, `$b`, `$WT` come from
+`references/worktree-helpers.md` (no worktree → no lock, no stack). Scan sibling worktrees first (only
 this scan sees another task's stack), then `mkdir` (atomic — one caller wins a race):
 
 ```bash
@@ -85,13 +85,12 @@ acquire, the release, the bring-up or the teardown. One lock per worktree: it se
 this task's stacks; the sibling scan shows other tasks. A stack started without a lock does not show up — check
 `docker ps` when a bring-up fails on a busy port.
 
-## 1. The stack runs in its OWN agterm session
+## 1. The stack runs in its OWN companion session
 
 ```bash
 id="$(printf '%s' "$b" | grep -oiE '^[a-z]+-[0-9]+' | tr '[:lower:]' '[:upper:]')"
-pfx="$(bash <sadensmol-task-skill-dir>/scripts/session-tree-prefix.sh)"
 AGST="$(cd <sadensmol-task-skill-dir> && pwd -P)/../agterm/scripts/agst.sh"
-sid="$(agtermctl session new --cwd "<repo>" --name "$pfx infra <service> ${id:-$b}" --after "$AGTERM_SESSION_ID" \
+sid="$(bash <sadensmol-task-skill-dir>/scripts/child-session.sh "infra <service> ${id:-$b}" --cwd "<repo>" \
   --no-select --command "zsh -lc 'sh \"$AGST\" make up <service>'" --json | jq -r '.result.id')"
 agtermctl session text --target "$sid" --lines 5
 ```
@@ -103,17 +102,16 @@ agtermctl session text --target "$sid" --lines 5
   `agtermctl session type --target "$sid" $'n\n'`. Read the screen again, then go on to
   the health check.
 
-- **Name it as a tree child of the task session:** `└─ infra <service> <task ID>` when
-  it is the last child below the task session, `├─ infra …` when another child is
-  already below. The helper decides; never hardcode the prefix.
-- `--after "$AGTERM_SESSION_ID"` keeps it directly below this session. **`--no-select`
-  is required** — the operator stays in the main session. The stack may run in the
-  foreground there.
+- **Open it through `child-session.sh`:** a companion (`session new --parent`), shown
+  indented under the task session and closed with it. Never call `session new` for it
+  directly. The helper has no fallback: if it fails, stop and report the error.
+- **`--no-select` is required** — the operator stays in the main session. The stack may
+  run in the foreground there.
 - **`agst`** (the agterm cookbook's `long-commands-status` wrapper, bundled as
   `sadensmol-agterm` → `scripts/agst.sh`; `$AGST` from step 0a) sets
   the sidebar row **active** while the command runs, **completed** on exit 0, **blocked**
   on non-zero, so a stack that died on startup is visible. Prefix any long command with it
-  (`sh "$AGST" make test`, `sh "$AGST" go test ./...`). It passes the exit code through and, outside
+  (`sh "$AGST" make test`, `sh "$AGST" go test -v ./...`; always pass `-v` — local and CI/CD runs alike. It streams each test for one package; with several packages Go holds output until each package ends, unless `-p 1` or `-json` is set, so a silent log does not mean stuck). It passes the exit code through and, outside
   agterm, just `exec`s the command. A hang reads as active; Ctrl-C leaves the row active.
   Always call it by its quoted path through `sh` (`sh "$AGST" …`), never a bare `agst`:
   it is not on `PATH`, and `sh` works even when an install dropped the `+x` bit.
@@ -122,7 +120,7 @@ agtermctl session text --target "$sid" --lines 5
 
 A service's stack provisions only that service's schema and binds the shared host
 ports, so only that service's tests may run against it, one run at a time — pass
-`-p 1` to `go test ./...` (Go runs packages in parallel by default). **Never two infra
+`-p 1` to `go test -v ./...` (Go runs packages in parallel by default). **Never two infra
 sessions in parallel**: they fight over ports, and the second one's migrations land on
 the first one's database.
 

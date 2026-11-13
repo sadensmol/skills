@@ -57,7 +57,7 @@ At the same `<sha>`, fetch `cookbook/long-commands-status/agst.sh` (raw URL at t
 must still be linked from the index) and compare it with this skill's `scripts/agst.sh`:
 
 ```bash
-new="$(mktemp -d)/agst.sh"
+new="<session-base>/.scratch/agst.sh"   # the router's scratch dir, not a system temp dir
 curl -fsSL "https://raw.githubusercontent.com/umputun/agterm/<sha>/cookbook/long-commands-status/agst.sh" -o "$new"
 cmp -s "$new" <skill-source-dir>/scripts/agst.sh && echo AGST_CURRENT || diff -u <skill-source-dir>/scripts/agst.sh "$new"
 ```

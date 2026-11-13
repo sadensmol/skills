@@ -32,22 +32,24 @@ KINDS = ("claude", "opencode")
 PANES = {"writer": "left", "reviewer": "right"}
 LABELS = {"writer": "Chat from writer:", "reviewer": "Chat from reviewer:"}
 USER_REQUEST_LABEL = "Chat from reviewer (user request):"
-USER_SAID_LABEL = "The user said to the {role} (never send an ack: a VIEW: or a STOP: only):"
+USER_SAID_LABEL = ("The user said to the {role} (context only, never send an ack: a STOP: "
+                   "only when its answer or change is wrong):")
 USER_SAID_THREAD_LABEL = ("The user said to the {role} (the {role} settles it in a pair "
                           "thread, do not answer it here and never send an ack):")
 COMMAND_RULE = ("A message that only runs a command or skill (task finish) runs at once, "
-                "with FYI: running <command> to the {peer}. A plain fact you cite (file:line, "
-                "command output) is answered at once, then FYI: answered to the {peer}.")
+                "with FYI: running <command> to the {peer}.")
 PAIR_REMINDER = (
-    "PAIR MODE: {forwarded} Do not answer or edit yet: write your view file, then settle "
-    "the message with the {peer} through a liaison subagent (pair.md, Liaison). Tell the "
-    "user in one line that the pair discusses it, and give the joint result when the "
-    "liaison returns. " + COMMAND_RULE)
+    "PAIR MODE: {forwarded} Clear (simple, settled by plan/skill/convention, done "
+    "before, 100% sure): do it now, alone. Hard: do not edit yet; write your view file, "
+    "settle it via a liaison (pair.md, Liaison). A hard question: answer the user now "
+    "({peer} check pending), then only {peer} agreed. or Changed: <answer>. A hard "
+    "request: say the pair discusses it. " + COMMAND_RULE)
 PAIR_REMINDER_DIRECT = (
-    "PAIR MODE: {forwarded} Do not answer or edit yet: send the {peer} your own VIEW (a "
-    "question as VIEW: user asked: <verbatim>. My answer: <answer>), then MERGE per "
-    "pair.md. Tell the user in one line that you discuss it with the {peer}; end your "
-    "turn. " + COMMAND_RULE)
+    "PAIR MODE: {forwarded} Clear (simple, settled by plan/skill/convention, done "
+    "before, 100% sure): do it now, alone. Hard: do not edit yet; send the {peer} "
+    "DECISION: <problem only> (a question: DECISION: user asked: <verbatim>), then VIEW, "
+    "MERGE per pair.md. A hard question: answer the user now ({peer} check pending), then "
+    "only {peer} agreed. or Changed: <answer>. " + COMMAND_RULE)
 # the OpenCode agent names are what its prompt bar shows: Planning, Main, Review
 REVIEWER_AGENT = "review"
 # the reviewer agents before the rename: a reviewer started with one still runs on it
@@ -65,12 +67,63 @@ MODELS = {
 }
 # the stage record of a single-agent session, at the worktree base
 STAGE_FILE = ".task-stage"
-# `stage plan --fresh` (references/plan.md): the first prompt of the restarted writer,
-# passed to the launcher as TASK_CONTINUE. No shell-special characters: it is nested in
-# "..." inside '...' on the start line.
-FRESH_PROMPT = ("Plan discussion: your context was cleared on purpose and PLAN.md at the "
-                "worktree base is the whole task context now. Read PLAN.md, then open the "
-                "plan gate (references/plan.md, step 6) and discuss the plan with the user.")
+# the decisions log of a single session (SKILL.md, Model decisions log)
+SINGLE_DECISIONS_FILE = ".task-decisions.md"
+# the user decisions made after the plan approval, in both modes: PLAN.md is frozen then
+# (SKILL.md, User decisions log)
+USER_DECISIONS_FILE = ".task-user-decisions.md"
+USER_DECISIONS_READ = (f"{USER_DECISIONS_FILE} when it exists (a later user decision wins "
+                       "over PLAN.md)")
+# the Q&A log after the plan approval, in both modes; on PLAN it is a section of PLAN.md
+# (SKILL.md, Q&A log)
+QA_FILE = ".task-qa.md"
+# the PLAN.md sections that the logs fill on PLAN, by entry kind
+PLAN_LOG_SECTIONS = {"qa": "## Q&A", "decision": "## Decisions"}
+PLAN_LOG_IDS = {"qa": re.compile(r"^### Q(\d+) ", re.M),
+                "decision": re.compile(r"^### D(\d+) ", re.M)}
+# PLAN-stage log entries held while PLAN.md is missing or the plan gate shows it: the gate
+# reads the file once, so an edit makes the open page stale (references/plannotator.md)
+PLAN_LOG_PENDING = ".scratch/plan-log-pending.json"
+# the section of a single session's decisions log that reviewd appends (references/reviewd.md)
+REVIEWS_HEADING = "## Reviews"
+# `fresh` (references/fresh.md): the first prompt of the restarted writer per purpose,
+# passed to the launcher as TASK_CONTINUE. {decisions} is the decisions log of the mode,
+# {stage} the recorded stage. No shell-special characters: it is nested in "..." inside
+# '...' on the start line. Every one starts with `<label>: your context was cleared on
+# purpose`: the router hooks skip their routing pass on it (FRESH_PROMPT_RE), so the
+# new conversation loads only what its action needs.
+FRESH_MARK = "your context was cleared on purpose"
+FRESH_PROMPT_RE = re.compile(r"[A-Za-z ]+: " + FRESH_MARK)
+TASK_SKILL_ONLY = ("Load only the task skill (the sadensmol-task dispatcher and the project "
+                   "task skill)")
+FRESH_PROMPTS = {
+    "plan": (f"Plan discussion: {FRESH_MARK} and PLAN.md at the worktree base is the whole "
+             f"task context now. {TASK_SKILL_ONLY}, read PLAN.md, then open the plan gate "
+             "directly (references/plan.md, step 6) and discuss the plan with the user."),
+    "impl": (f"Implementation: {FRESH_MARK} after the user approved PLAN.md. "
+             f"{TASK_SKILL_ONLY}, read PLAN.md, {{decisions}}, {USER_DECISIONS_READ} and the "
+             "git diff of each repo at the worktree base, then implement the approved plan "
+             "now (references/plan.md, step 7). Load any other skill only when a step of the "
+             "work needs it."),
+    "finish": (f"Finish: {FRESH_MARK} for task finish. "
+               f"{TASK_SKILL_ONLY}, read PLAN.md, {{decisions}}, {USER_DECISIONS_READ} and the "
+               "git diff of each repo at the worktree base, then run the task finish of the "
+               "project from its start, without its Start in a clean context step "
+               "(references/finish.md). Its review gate still applies. Load any other skill "
+               "only when a step of finish needs it."),
+    "reviews": (f"Plan review: {FRESH_MARK} for task reviews, and the task is on PLAN again "
+                "to rework the approved plan. "
+                f"{TASK_SKILL_ONLY}, read PLAN.md, {{decisions}}, {USER_DECISIONS_READ} and the "
+                "git diff of each repo at the worktree base, then walk the plan steps with "
+                "the user (references/reviews.md, step 3). Write no code until the user "
+                "approves the reworked PLAN.md. Load any other skill only when a step of the "
+                "review needs it."),
+    "continue": (f"Fresh start: {FRESH_MARK} by task fresh, and the task stays in its "
+                 "{stage} stage. Load no skill and read nothing about the task now: wait "
+                 "for the user."),
+}
+# the stage of each `fresh --then`; without --then the recorded stage stays
+FRESH_STAGES = {"plan": "plan", "impl": "impl", "finish": "impl", "reviews": "plan"}
 # `stage` returns before the handoff restarts the session it runs in
 STAGE_SETTLE_SECONDS = float(os.environ.get("PAIR_STAGE_SETTLE_SECONDS", "3"))
 # typed reviewer start lines retried when the split shell lost keystrokes
@@ -392,19 +445,23 @@ def uses_threads(cfg: dict, role: str) -> bool:
             and cfg["roles"]["reviewer"]["kind"] == "opencode")
 
 
+UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 SECRET_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
     # KEY=value / token: value, where the key names a secret  # pragma: allowlist secret
-    re.compile(r"(?i)(?<=\b)((?:api[-_]?key|token|secret|password|passwd|authorization|cookie|bearer)"
+    re.compile(r"(?i)(?<=\b)((?:api[-_ ]?key|token|secret|password|passwd|authorization|cookie|bearer)"
                r"[\"']?\s*[:=]?\s*[\"']?)[^\s\"',;]{6,}"),
     # long opaque tokens: mixed case and digits, 24+ chars, not part of a path
     re.compile(r"(?<![\w\-/.])(?=[\w\-]*[A-Z])(?=[\w\-]*[a-z])(?=[\w\-]*\d)[\w\-]{24,}(?![\w\-/.])"),
+    # UUID keys after a key label; a bare UUID (a cid, a session id) stays readable
+    re.compile(rf"(?i)(\bkeys?\b[\"']?\s*[:=]?\s*){UUID_RE}(?:\s+{UUID_RE})*"),
 )
 
 
 def redact_secrets(text: str) -> str:
     """Mask anything that looks like a credential before it leaves this agent."""
     text = SECRET_PATTERNS[0].sub("[REDACTED]", text)
+    text = SECRET_PATTERNS[3].sub(r"\1[REDACTED]", text)
     text = SECRET_PATTERNS[1].sub(r"\1[REDACTED]", text)
     return SECRET_PATTERNS[2].sub("[REDACTED]", text)
 
@@ -454,9 +511,19 @@ def thread_routes(base: Path, cfg: dict) -> str:
 
 
 STAGE_LINE = "TASK STAGE: {stage} (SKILL.md, Stages)."
+PLAN_CLOSED_LINE = "PLAN.md is closed: all feedback is implementation work; task reviews reopens it."
+PLAN_CLOSED = (
+    "PLAN.md is closed: the user approved it, and PLAN to IMPL is one-way. Only the user's "
+    "task reviews reopens it, through pair.py fresh --then reviews (references/reviews.md). "
+    "Until then it is frozen, "
+    "general direction only. All feedback is implementation work: decision loop, builder or "
+    "fixer, pre-PR diff gate with the code delta. No planner, no plan diff, no plan gate, "
+    "no stage change, no restart for it. Ask the user only for critical decisions "
+    "(SKILL.md, Autonomy). Resolve other choices, log them, and implement. User decisions go to "
+    f"{USER_DECISIONS_FILE} through pair.py user-decided (SKILL.md, Stages).")
 UNKNOWN_STAGE_NOTE = (
     "TASK STAGE: this pair started before the stage was recorded, so it is PLAN now. Only "
-    "when the user explicitly approved PLAN.md, run python3 {py} stage --base {base} impl "
+    "when the user explicitly approved PLAN.md, run python3 {py} fresh --base {base} --then impl "
     "(SKILL.md, Stages); never infer the approval from PLAN.md.")
 
 
@@ -466,7 +533,12 @@ def stage_note(base: Path, cfg: dict, role: str, session_id: object) -> str:
     The session id changes after /clear, and `stage` resumes the recorded one.
     """
     changed = False
+    if cfg.get("stage") != "impl" and impl_reached(base):
+        cfg["stage"] = "impl"
+        changed = True
     note = STAGE_LINE.format(stage=str(cfg.get("stage", "")).upper())
+    if cfg.get("stage") == "impl":
+        note = f"{note} {PLAN_CLOSED_LINE}"
     if cfg.get("stage") not in STAGES:
         cfg["stage"] = "plan"
         note = UNKNOWN_STAGE_NOTE.format(py=PAIR_PY, base=base)
@@ -488,7 +560,7 @@ def cmd_user_prompt(args: argparse.Namespace) -> int:
     """UserPromptSubmit hook of a Claude Code agent in pair mode.
 
     Forwards what the user typed to the peer and reminds this agent, in its
-    context, that the pair discusses the message before anyone answers it. It
+    context, that a clear message is handled alone and a hard one by the pair. It
     never blocks the prompt: on any failure it only says so in the context.
     """
     peer = other(args.role)
@@ -508,6 +580,10 @@ def cmd_user_prompt(args: argparse.Namespace) -> int:
         if uses_threads(cfg, args.role):
             reminder = PAIR_REMINDER
         stage_line = stage_note(base, cfg, args.role, payload.get("session_id"))
+        if FRESH_PROMPT_RE.match(prompt):
+            # the first prompt of a `fresh` restart comes from the launcher, not the user
+            print(stage_line)
+            return 0
         release_held(base, peer)
         path = write_message(base, peer, "user", user_said(base, cfg, args.role, prompt))
     except errors as exc:
@@ -664,9 +740,10 @@ EDIT_DENIED = ("PAIR: {file} belongs to pair thread {id} ({topic}), which is sti
 
 
 def cmd_edit_guard(args: argparse.Namespace) -> int:
-    """PreToolUse hook of a Claude writer: refuse an edit to a file of an open thread.
+    """PreToolUse hook of a Claude writer: refuse an edit to a file of an open thread, and
+    to PLAN.md at the base on IMPL.
 
-    It covers the writer and its subagents (builders, fixers). It never fails the
+    It covers the writer and its subagents (builders, fixers, a planner). It never fails the
     tool call on its own error: a broken guard must not stop the work.
     """
     try:
@@ -681,6 +758,11 @@ def cmd_edit_guard(args: argparse.Namespace) -> int:
             path = Path(payload.get("cwd") or base) / path
         rel = os.path.relpath(path.resolve(), base.resolve())
         if rel.startswith("..") or rel.startswith(".pair" + os.sep):
+            return 0
+        if rel == "PLAN.md" and impl_reached(base):
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": f"PAIR: {PLAN_CLOSED}"}}))
             return 0
         for _dir, meta in all_threads(base):
             if meta["status"] != "open":
@@ -700,9 +782,9 @@ def cmd_edit_guard(args: argparse.Namespace) -> int:
 SESSION_START_NOTE = (
     "PAIR MODE resumed after /clear: you are still the {role_upper} of the pair, the "
     "{peer} runs in the {pane} pane. pair.py stopped your old waiter{focused}. Re-read "
-    "{pair_md}, then PLAN.md and {base}/.pair/decisions.md (every pair decision so far) to "
-    "catch up, and the latest files in {base}/.pair/inbox/*/read/ for what they do not "
-    "cover.{rearm}")
+    "{pair_md}, then PLAN.md, {base}/.pair/decisions.md (every pair decision so far) and "
+    "{base}/" + USER_DECISIONS_READ + " to catch up, and the latest files in "
+    "{base}/.pair/inbox/*/read/ for what they do not cover.{rearm}")
 
 SESSION_START_REARM = (
     " Start the Monitor tool on python3 {py} wait --follow --base {base} --role {role} "
@@ -891,11 +973,20 @@ UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
 
 def respawn(old: str, name: str, cwd: str, command: str) -> str:
     """Replace a session with a new one right after it, then close the old one."""
+    try:
+        tint = find_session(old).get("tint")
+    except PairError:
+        tint = None
     out = ctl("session", "new", "--cwd", cwd, "--name", name,
               "--after", old, "--no-select", "--command", command)
     match = UUID_RE.search(out)
     if not match:
         raise PairError(f"agtermctl session new printed no session id: {out.strip()}")
+    if tint:
+        try:
+            ctl("session", "tint", tint, "--target", match.group(0))
+        except (PairError, OSError, subprocess.TimeoutExpired):
+            pass
     if os.environ.get("AGTERM_SESSION_ID", "").lower() == old.lower():
         # this process runs inside the old session: close it once we have returned
         ctl_bin = os.environ.get("AGTERMCTL", "agtermctl")
@@ -909,6 +1000,7 @@ def respawn(old: str, name: str, cwd: str, command: str) -> str:
 
 
 def cmd_respawn(args: argparse.Namespace) -> int:
+    refuse_live_companions(args.old)
     print(respawn(args.old, args.name, args.cwd, args.command))
     return 0
 
@@ -1006,8 +1098,37 @@ def is_pair(base: Path, single: bool) -> bool:
     return not single and (pair_dir(base) / "config.json").is_file()
 
 
+def impl_reached(base: Path) -> bool:
+    """One impl record is enough: a stale record of the other mode never reopens the plan."""
+    pair_cfg = pair_dir(base) / "config.json"
+    return ((pair_cfg.is_file() and load_config(base).get("stage") == "impl")
+            or single_record(base).get("stage") == "impl")
+
+
+def refuse_plan_reopen(base: Path) -> None:
+    if impl_reached(base):
+        raise PairError(PLAN_CLOSED)
+
+
+def reopen_plan(base: Path) -> None:
+    """task reviews: clear the impl stage in both records, so no stale one keeps it."""
+    pair_cfg = pair_dir(base) / "config.json"
+    if pair_cfg.is_file():
+        cfg = load_config(base)
+        if cfg.get("stage") == "impl":
+            cfg["stage"] = "plan"
+            save_config(base, cfg)
+    single = single_record(base)
+    if single.get("stage") == "impl":
+        single["stage"] = "plan"
+        save_record(base, True, single)
+
+
 def load_record(base: Path, single: bool) -> dict:
-    return load_config(base) if is_pair(base, single) else single_record(base)
+    rec = load_config(base) if is_pair(base, single) else single_record(base)
+    if impl_reached(base):
+        rec["stage"] = "impl"
+    return rec
 
 
 def save_record(base: Path, single: bool, rec: dict) -> None:
@@ -1055,7 +1176,72 @@ def stage_flags(base: Path, rec: dict, role: str, pair: bool) -> str:
     else:
         rec["claude_session"] = sid
     model = MODELS[stage]["claude"]
-    return f"{flag} --model {model['model']} --effort {model['effort']}"
+    flags = f"{flag} --model {model['model']} --effort {model['effort']}"
+    if rec.get("fresh"):
+        flags = " ".join(filter(None, (flags, fresh_claude_flags(base, role, pair))))
+    return flags
+
+
+# plugins whose SessionStart hook loads a skill into every new conversation. A `fresh`
+# conversation runs them without their hooks: their skills load on request only.
+AUTO_CONTEXT_PLUGINS = ("superpowers@claude-plugins-official",)
+FRESH_DIR = ".task-fresh"
+
+
+def enabled_plugin_root(plugin_id: str) -> Path | None:
+    """The install directory of a plugin the user enabled; None when it is not."""
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    try:
+        enabled = json.loads((root / "settings.json").read_text()).get("enabledPlugins") or {}
+        installed = json.loads((root / "plugins" / "installed_plugins.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if enabled.get(plugin_id) is not True:
+        return None
+    for entry in installed.get("plugins", {}).get(plugin_id) or []:
+        path = Path(entry.get("installPath", ""))
+        if path.is_dir():
+            return path
+    return None
+
+
+def fresh_claude_flags(base: Path, role: str, pair: bool) -> str:
+    """The --settings and --plugin-dir flags of a `fresh` Claude conversation; '' when no
+    AUTO_CONTEXT_PLUGINS plugin is enabled.
+
+    Each such plugin is switched off and loaded again from a copy without its hooks, under
+    the same name, so `superpowers:<skill>` still resolves. Claude Code applies only the last
+    --settings, so in pair mode the file carries the pair hooks too.
+    """
+    folder = base / FRESH_DIR
+    disabled, dirs = {}, []
+    for plugin_id in AUTO_CONTEXT_PLUGINS:
+        source = enabled_plugin_root(plugin_id)
+        if not source:
+            continue
+        name = plugin_id.split("@")[0]
+        copy = folder / "plugins" / name
+        (copy / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        (copy / ".claude-plugin" / "plugin.json").write_text(json.dumps(
+            {"name": name, "description": f"the {name} skills without its hooks",
+             "version": "0.0.0"}, indent=2) + "\n")
+        for part in ("skills", "agents", "commands"):
+            link = copy / part
+            if link.is_symlink():
+                link.unlink()
+            if (source / part).is_dir():
+                link.symlink_to(source / part)
+        disabled[plugin_id] = False
+        dirs.append(copy)
+    if not disabled:
+        return ""
+    settings = claude_settings(base, role) if pair else {}
+    settings["enabledPlugins"] = disabled
+    path = folder / f"claude-{role}-settings.json"
+    path.write_text(json.dumps(settings, indent=2) + "\n")
+    exclude_from_git(base, f"/{FRESH_DIR}/")
+    # double quotes: the launchers nest these flags in '...' on a shell line
+    return " ".join([f"--settings \"{path}\"", *(f"--plugin-dir \"{d}\"" for d in dirs)])
 
 
 def latest_opencode_session(base: Path) -> str | None:
@@ -1117,30 +1303,105 @@ def cmd_opencode_args(args: argparse.Namespace) -> int:
 SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def cmd_stage(args: argparse.Namespace) -> int:
-    """Switch the task stage and restart the sessions on its models (SKILL.md, Stages).
-
-    A running session cannot switch its model, so the writer terminal is respawned with
-    --resume of its conversation and the stage flags, and in pair mode `launch --reopen`
-    starts the reviewer in the new split. The old terminal closes with both panes, so the
-    reviewer is never restarted on its own first. The restart runs detached: this command
-    usually runs inside the session it replaces.
-
-    --fresh (plan only) restarts even on the same stage, with new conversations for every
-    agent: PLAN.md is the whole context of the plan discussion (references/plan.md).
-    """
+def restart_record(args: argparse.Namespace) -> dict:
+    """The record of a restart; refused with exit 5 while a pair thread is open."""
     base = Path(args.base).resolve()
-    if args.fresh and args.stage != "plan":
-        raise PairError("--fresh starts the plan discussion: use it with stage plan")
-    pair = is_pair(base, args.single)
-    if pair:
+    if is_pair(base, args.single):
         busy = [meta["id"] for _path, meta in all_threads(base) if meta["status"] == "open"]
         if busy:
             raise PairError(f"thread {', '.join(busy)} is open: settle and close it before the "
-                            "stage changes (its liaison and reviewer subagent die with the "
+                            "sessions restart (its liaison and reviewer subagent die with the "
                             "restart)", code=5)
     rec = load_record(base, args.single)
     record_launcher(rec, args)
+    return rec
+
+
+def refuse_live_companions(old: str) -> None:
+    """Exit 5 while `old` has companions: closing a parent closes them too."""
+    tree = json.loads(ctl("tree", "--json"))
+    names = [node.get("name") or node["id"]
+             for workspace in tree["result"]["tree"]["workspaces"]
+             for node in workspace.get("sessions", [])
+             if str(node.get("parent", "")).lower() == old.lower()]
+    if names:
+        raise PairError(f"companion session {', '.join(names)} is open: wait for it or close "
+                        "it, then run this again (closing the task session closes its "
+                        "companions)", code=5)
+
+
+def restart(args: argparse.Namespace, rec: dict, stage: str, purpose: str | None) -> int:
+    """Restart the sessions of the task on the models of `stage` (SKILL.md, Stages).
+
+    A running session cannot switch its model or clear its context, so the writer terminal
+    is respawned with the command the project launcher prints, and in pair mode `launch
+    --reopen` starts the reviewer in the new split. The old terminal closes with both
+    panes, so the reviewer is never restarted on its own first. The restart runs detached:
+    this command usually runs inside the session it replaces.
+
+    Without `purpose` every agent resumes its recorded conversation. With one (`fresh`)
+    every agent starts a new conversation, and the writer gets the first prompt of that
+    purpose (FRESH_PROMPTS).
+    """
+    base = Path(args.base).resolve()
+    pair = is_pair(base, args.single)
+    old = rec.get("agterm_session") if pair else os.environ.get("AGTERM_SESSION_ID")
+    if not old:
+        raise PairError("no agterm session to restart: " + (
+            "pair.py launch records it" if pair else "run it inside the task session"))
+    if not rec.get("launcher"):
+        raise PairError("no launcher recorded for this task (it was opened before stages): "
+                        "pass --launcher <the project new-task.sh> --branch <branch>")
+    refuse_live_companions(old)
+    if purpose == "reviews":
+        # the one way back from IMPL: the record of the other mode must not keep impl
+        reopen_plan(base)
+    if purpose:
+        # no conversation to resume: never an old id, never the newest OpenCode session
+        rec.pop("claude_session", None)
+        rec.pop("opencode_session", None)
+        rec["fresh"] = purpose
+    elif (pair and rec["roles"]["writer"]["kind"] == "claude"
+            and not rec.get("claude_session", {}).get("writer")):
+        raise PairError("the conversation of the Claude writer is not recorded: run stage "
+                        "from the writer, or pass --session-id writer=<id>")
+    rec["stage"] = stage
+    if stage == "impl":
+        release_plan_log(base)
+    if pair:
+        if rec["roles"]["reviewer"]["kind"] == "opencode":
+            # every reader follows it: prompts, thread children, the pane plugin
+            rec["roles"]["reviewer"]["agent"] = REVIEWER_AGENT
+        elif rec["opencode"].get("session") and not purpose:
+            # the OpenCode writer resumes the session that launch bound
+            rec["opencode_session"] = rec["opencode"]["session"]
+    save_record(base, args.single, rec)
+    handoff = [sys.executable, str(PAIR_PY), "stage-handoff", "--base", str(base),
+               "--old", old, "--wait-seconds", str(args.wait_seconds)]
+    if args.single:
+        handoff.append("--single")
+    if args.foreground:
+        return main(handoff[2:])
+    log = (pair_dir(base) / "stage.log") if pair else base / f"{STAGE_FILE}.log"
+    env = dict(os.environ)
+    # detached from the old session: respawn closes it at once, not after we return
+    env.pop("AGTERM_SESSION_ID", None)
+    with open(log, "w") as out:
+        subprocess.Popen(handoff, stdin=subprocess.DEVNULL, stdout=out,
+                         stderr=subprocess.STDOUT, env=env, start_new_session=True)
+    print(json.dumps({"stage": stage, "changed": True, "restart": "started",
+                      "log": str(log)}))
+    return 0
+
+
+def cmd_stage(args: argparse.Namespace) -> int:
+    """Switch the task stage and restart the sessions on its models, each agent in its
+    recorded conversation (SKILL.md, Stages)."""
+    base = Path(args.base).resolve()
+    if args.stage == "plan":
+        refuse_plan_reopen(base)
+    rec = restart_record(args)
+    pair = is_pair(base, args.single)
     # a Claude writer runs this command: its own conversation is the one to resume
     own = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     if UUID_RE.fullmatch(own):
@@ -1160,54 +1421,35 @@ def cmd_stage(args: argparse.Namespace) -> int:
             rec.setdefault("claude_session", {})[role] = sid
         else:
             rec["claude_session"] = sid
-    if rec.get("stage") == args.stage and not args.fresh:
+    if rec.get("stage") == args.stage:
         save_record(base, args.single, rec)
         print(json.dumps({"stage": args.stage, "changed": False}))
         return 0
-    if args.fresh:
-        # no conversation to resume: every agent starts a new one on PLAN.md
-        rec.pop("claude_session", None)
-        rec.pop("opencode_session", None)
-        rec["fresh"] = True
-    old = rec.get("agterm_session") if pair else os.environ.get("AGTERM_SESSION_ID")
-    if not old:
-        raise PairError("no agterm session to restart: " + (
-            "pair.py launch records it" if pair else "run stage inside the task session"))
-    if not rec.get("launcher"):
-        raise PairError("no launcher recorded for this task (it was opened before stages): "
-                        "pass --launcher <the project new-task.sh> --branch <branch>")
-    if (pair and not args.fresh and rec["roles"]["writer"]["kind"] == "claude"
-            and not rec.get("claude_session", {}).get("writer")):
-        raise PairError("the conversation of the Claude writer is not recorded: run stage "
-                        "from the writer, or pass --session-id writer=<id>")
-    rec["stage"] = args.stage
-    if pair:
-        if rec["roles"]["reviewer"]["kind"] == "opencode":
-            # every reader follows it: prompts, thread children, the pane plugin
-            rec["roles"]["reviewer"]["agent"] = REVIEWER_AGENT
-        elif rec["opencode"].get("session") and not args.fresh:
-            # the OpenCode writer resumes the session that launch bound
-            rec["opencode_session"] = rec["opencode"]["session"]
-    save_record(base, args.single, rec)
-    handoff = [sys.executable, str(PAIR_PY), "stage-handoff", "--base", str(base),
-               "--old", old, "--wait-seconds", str(args.wait_seconds)]
-    if args.single:
-        handoff.append("--single")
-    if args.foreground:
-        return main(handoff[2:])
-    log = (pair_dir(base) / "stage.log") if pair else base / f"{STAGE_FILE}.log"
-    env = dict(os.environ)
-    # detached from the old session: respawn closes it at once, not after we return
-    env.pop("AGTERM_SESSION_ID", None)
-    with open(log, "w") as out:
-        subprocess.Popen(handoff, stdin=subprocess.DEVNULL, stdout=out,
-                         stderr=subprocess.STDOUT, env=env, start_new_session=True)
-    print(json.dumps({"stage": args.stage, "changed": True, "restart": "started",
-                      "log": str(log)}))
+    return restart(args, rec, args.stage, None)
+
+
+def cmd_fresh(args: argparse.Namespace) -> int:
+    """Restart the writer and the reviewer in new conversations on the same task, worktree
+    and agterm session (references/fresh.md), even on the same stage.
+
+    --then picks the stage and the first prompt: plan or reviews (PLAN), impl or finish
+    (IMPL). reviews is the only one that reopens the plan on IMPL (references/reviews.md).
+    Without it the recorded stage stays and the writer reports where the task stands.
+    """
+    if args.then == "plan":
+        refuse_plan_reopen(Path(args.base).resolve())
+    rec = restart_record(args)
+    stage = FRESH_STAGES[args.then] if args.then else record_stage(rec)
+    return restart(args, rec, stage, args.then or "continue")
+
+
+def cmd_plan_open(args: argparse.Namespace) -> int:
+    """Exit 1 on IMPL: the plan gate scripts run this before they touch PLAN.md."""
+    refuse_plan_reopen(Path(args.base).resolve())
     return 0
 
 
-def launcher_command(rec: dict, single: bool, kind: str) -> str:
+def launcher_command(rec: dict, single: bool, kind: str, pair: bool) -> str:
     """The writer start command the project launcher prints for the recorded stage."""
     launcher = rec["launcher"]
     argv = [launcher["script"], launcher["branch"], "--print-command"]
@@ -1220,7 +1462,9 @@ def launcher_command(rec: dict, single: bool, kind: str) -> str:
         env["OPENCODE"] = "1"
     if rec.get("fresh"):
         # the first prompt of the new conversation, instead of the stage-change one
-        env["TASK_CONTINUE"] = FRESH_PROMPT
+        decisions = ".pair/decisions.md" if pair else SINGLE_DECISIONS_FILE
+        env["TASK_CONTINUE"] = FRESH_PROMPTS[rec["fresh"]].format(
+            decisions=decisions, stage=record_stage(rec).upper())
     result = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=120,
                             check=False)
     command = result.stdout.strip()
@@ -1230,9 +1474,9 @@ def launcher_command(rec: dict, single: bool, kind: str) -> str:
 
 
 def cmd_stage_handoff(args: argparse.Namespace) -> int:
-    """The detached half of `stage`: respawn the writer, then start the reviewer."""
+    """The detached half of `stage` and `fresh`: respawn the writer, then start the reviewer."""
     base = Path(args.base).resolve()
-    time.sleep(STAGE_SETTLE_SECONDS)  # let the agent that ran `stage` take its result
+    time.sleep(STAGE_SETTLE_SECONDS)  # let the agent that ran the restart take its result
     pair = is_pair(base, args.single)
     rec = load_record(base, args.single)
     node = find_session(args.old)
@@ -1242,7 +1486,14 @@ def cmd_stage_handoff(args: argparse.Namespace) -> int:
     if pair:
         # fresh port and reviewer configs (both stage agents), as for a re-open
         init_pair(base, kind)
-    command = launcher_command(rec, args.single, kind)
+        if rec.get("fresh"):
+            # the new conversations never get the old backlog: held FYIs and unread
+            # messages go to read/ before any agent starts
+            for role in ROLES:
+                release_held(base, role)
+                for path in unread(base, role):
+                    mark_read(base, role, path)
+    command = launcher_command(rec, args.single, kind, pair)
     sid = respawn(args.old, node.get("name") or base.name, str(base), command)
     if pair:
         launch(base, sid, True, args.wait_seconds)
@@ -1267,6 +1518,8 @@ def init_pair(base: Path, writer: str) -> int:
         if started != writer:
             raise PairError(f"this task was started with a {started} writer; "
                             "re-open it with the same agent")
+        if impl_reached(base):
+            cfg["stage"] = "impl"
     else:
         reviewer = "opencode" if writer == "claude" else "claude"
         # a single session turned into a pair keeps its stage
@@ -1302,13 +1555,31 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 SHELL_SPECIAL = set("'\"$`\\")
-CATCH_UP = ("This task was re-opened: read PLAN.md and .pair/decisions.md (every pair "
-            "decision so far) to catch up first; read .pair/inbox/*/read/ only for a "
-            "topic they do not cover.")
-# a reviewer restarted by `stage plan --fresh`: PLAN.md alone, never the old messages
-FRESH_CATCH_UP = ("The context of both agents was cleared on purpose for the plan "
-                  "discussion: read PLAN.md, the whole task context now, and never the old "
-                  "messages in .pair/inbox/*/read/.")
+CATCH_UP = ("This task was re-opened: read PLAN.md, .pair/decisions.md (every pair "
+            f"decision so far) and {USER_DECISIONS_READ} to catch up first; read "
+            ".pair/inbox/*/read/ only for a topic they do not cover.")
+# a reviewer restarted by `fresh`, per purpose: never the old messages
+FRESH_ONLY_NEEDED = "Load any skill only when a step of your work needs it."
+FRESH_CATCH_UPS = {
+    "plan": ("The context of both agents was cleared on purpose for the plan discussion: "
+             "read PLAN.md, the whole task context now, and never the old messages in "
+             f".pair/inbox/*/read/. {FRESH_ONLY_NEEDED}"),
+    "impl": ("The context of both agents was cleared on purpose after the user approved "
+             "PLAN.md, and the writer implements it now: read PLAN.md, .pair/decisions.md, "
+             f"{USER_DECISIONS_READ} and the git diff, and never the old messages in "
+             f".pair/inbox/*/read/. {FRESH_ONLY_NEEDED}"),
+    "finish": ("The context of both agents was cleared on purpose for task finish, and the "
+               "writer runs it now: read PLAN.md, .pair/decisions.md, "
+               f"{USER_DECISIONS_READ} and the git diff, and never the old messages in "
+               f".pair/inbox/*/read/. {FRESH_ONLY_NEEDED}"),
+    "reviews": ("The context of both agents was cleared on purpose for task reviews, and the "
+                "task is on PLAN again: the writer walks the plan steps with the user. Read "
+                f"PLAN.md, .pair/decisions.md, {USER_DECISIONS_READ} and the git diff, and "
+                f"never the old messages in .pair/inbox/*/read/. {FRESH_ONLY_NEEDED}"),
+    "continue": ("The context of both agents was cleared on purpose by task fresh: load no "
+                 "skill and read nothing about the task now, never the old messages in "
+                 ".pair/inbox/*/read/, and wait for the messages of the writer."),
+}
 
 
 def brief(base: Path, cfg: dict, role: str, then: str | None = None,
@@ -1332,52 +1603,58 @@ def brief(base: Path, cfg: dict, role: str, then: str | None = None,
     else:
         parts.append(f"Messages from the {peer} arrive by themselves as prompts that "
                      "start with Chat from.")
-    parts.append("This is pair programming: every decision is made by both agents "
-                 "BEFORE the code is typed, never in a review afterwards. Each agent forms "
-                 "its own view before it sees the view of the other, then the two views "
-                 "are merged: one agent never decides alone while the other only signs. "
-                 "A user message that only runs a command, subcommand or skill, such as "
-                 "task finish, task plan or run the tests, is not a decision: run it at "
-                 "once and send the peer FYI: running the command. How much discussion "
-                 "a decision needs depends on its weight: see Decision weight in pair.md.")
+    parts.append("This is pair programming with a fast default: the writer decides a "
+                 "clear case alone (simple, settled by the plan, a skill or a convention, "
+                 "or done before, and 100% sure). A hard case (not clear what or how, or "
+                 "not 100% sure) is decided by both agents BEFORE the code is typed: each "
+                 "agent forms its own view before it sees the view of the other, then the "
+                 "two views are merged. When in doubt, it is hard. The reviewer is ALWAYS "
+                 "in code review: every landed change, the final check and every "
+                 "code-review run. A user message that only runs a command, subcommand or "
+                 "skill, such as task finish, task plan or run the tests, is not a "
+                 "decision: run it at once and send the peer FYI: running the command. "
+                 "See Decision weight in pair.md.")
     if uses_threads(cfg, role):
-        parts.append("Every opinion question of the user (why, could we, is this right) "
-                     "is discussed by both agents before the user gets an answer. "
-                     "A plain fact the user asks, answered from a cited file:line or "
-                     "command output, goes to the user at once, with an FYI to the peer. "
-                     "You are the DRIVER: for each decision and each "
-                     "user question or request, write your own view to a file, then run a "
+        parts.append("A clear user question or request: answer or do it at once, alone. "
+                     "A hard opinion question gets your own answer at once, labelled "
+                     "reviewer check pending, and is then checked by both agents; afterwards "
+                     "tell the user only Reviewer agreed. or Changed after review: the new "
+                     "answer. You are the DRIVER: for each hard decision and each hard user "
+                     "question or request, write your own view to a file, then run a "
                      "background liaison subagent that settles it with the reviewer in a "
-                     "pair thread (see Liaison in pair.md). Edit or answer only with the "
+                     "pair thread (see Liaison in pair.md). Edit or answer it only with the "
                      "result it returns.")
     else:
-        parts.append(f"Every opinion question of the user (why, could we, is this right) "
-                     f"is discussed by both agents before the user gets an answer: send the "
-                     f"{peer} VIEW: user asked: the question. "
-                     "My answer: your answer. Answer the user only after the two of you "
-                     "merge the views, and give both answers when you still disagree. "
-                     "A plain fact the user asks, answered from a cited file:line or "
-                     "command output, goes to the user at once, with an FYI to the peer.")
+        parts.append(f"A clear user question or request: answer or do it at once, alone. "
+                     f"A hard opinion question gets your own answer at once, labelled "
+                     f"{peer} check pending: send the {peer} DECISION: user asked: the "
+                     f"question (the {peer} answers VIEW: user asked: with its own answer), "
+                     "and give the user your answer right away. After the merge, "
+                     f"tell the user only The {peer} agreed. or Changed after review: the "
+                     "new answer; give both answers when you still disagree. A user "
+                     f"message forwarded from the {peer} is context only: no VIEW, no ack.")
     if role == "writer":
         if not uses_threads(cfg, role):
-            parts.append("You are the DRIVER: for each decision, write your own view to a "
-                         "file, send the reviewer a DECISION with the problem only, never "
-                         "your view, and wait for its VIEW. Then send your VIEW and a MERGE "
-                         "that takes the best of both, and edit only after the reviewer "
-                         "agrees. Forward every user request to the reviewer as a DECISION.")
+            parts.append("You are the DRIVER: decide each clear case alone and type it. "
+                         "For each hard decision, write your own view to a file, send the "
+                         "reviewer a DECISION with the problem only, never your view, and "
+                         "wait for its VIEW. Then send your VIEW and a MERGE that takes the "
+                         "best of both, and edit only after the reviewer agrees.")
     else:
         parts.append("You are the NAVIGATOR and you are READ-ONLY: never edit, create or "
-                     "delete files in the worktree. You co-own every decision: answer each "
-                     "DECISION first with your own VIEW, formed from the code and the "
-                     "project conventions before you read the view of the writer. Answer "
-                     "a MERGE with AGREE only after you name the strongest objection you "
-                     "checked in the code and why it does not hold, or with COUNTER. Start "
-                     "reading the ticket and the code now.")
+                     "delete files in the worktree. You review every change as it lands "
+                     "(git diff) and send STOP: for a wrong one or for a hard decision taken "
+                     "alone; a correct one gets no reply. You co-own every hard decision: "
+                     "answer each DECISION first with your own VIEW, formed from the code "
+                     "and the project conventions before you read the view of the writer. "
+                     "Answer a MERGE with AGREE only after you name the strongest objection "
+                     "you checked in the code and why it does not hold, or with COUNTER. "
+                     "Start reading the ticket and the code now.")
         if kind == "opencode":
             parts.append("Threads in .pair/threads/ belong to their own reviewer subagents: "
                          "never read their files and never run thread send.")
     if reopen:
-        parts.append(FRESH_CATCH_UP if cfg.get("fresh") else CATCH_UP)
+        parts.append(FRESH_CATCH_UPS[cfg["fresh"]] if cfg.get("fresh") else CATCH_UP)
     if then:
         parts.append(f"Then do this: {then}")
     text = " ".join(parts)
@@ -1435,9 +1712,13 @@ def reviewer_command(base: Path, cfg: dict, reopen: bool) -> str:
         # the stage model, and --resume of the recorded conversation after a restart
         flags = stage_flags(base, cfg, "reviewer", pair=True)
         save_config(base, cfg)
+        # after `fresh` the first prompt carries FRESH_MARK, so the router hooks skip it too
+        first = (f"Pair mode start: {FRESH_MARK}. Follow the pair brief in your system "
+                 "prompt now." if reopen and cfg.get("fresh") else
+                 "Pair mode start: follow the pair brief in your system prompt now.")
         start = ("exec claude --dangerously-skip-permissions --disallowedTools Edit Write "
                  f"NotebookEdit --settings {settings} {flags} --append-system-prompt {brief_arg} "
-                 "\"Pair mode start: follow the pair brief in your system prompt now.\"")
+                 f"\"{first}\"")
     else:
         # the stage model: a reviewer started before the rename comes back on `review`
         (root / "opencode-reviewer.json").write_text(
@@ -1837,6 +2118,9 @@ def cmd_thread_send(args: argparse.Namespace) -> int:
     msg = put_message(path / "inbox" / args.to, sender, f"{label} {body}")
     if args.to == "reviewer":
         flush_thread(base, cfg, path, meta)
+    # with threads the main reviewer sends the writer nothing but FYIs, so no main-channel
+    # message would ever release them; the writer's wait delivers them as one batch
+    release_held(base, "writer")
     print(json.dumps({"sent": msg.name, "thread": args.id}))
     return 0
 
@@ -1890,6 +2174,12 @@ def cmd_thread_close(args: argparse.Namespace) -> int:
     base = resolve_base(args.base)
     path = thread_dir(base, args.id)
     meta = load_meta(path)
+    unread = sorted((path / "inbox" / "writer").glob("*.md"))
+    if unread:
+        raise PairError(f"thread {args.id} has {len(unread)} unread reviewer repl"
+                        f"{'y' if len(unread) == 1 else 'ies'}: read them first with "
+                        f"python3 {PAIR_PY} thread wait --base {base} --id {args.id}, "
+                        "answer them, then close", code=8)
     if args.status in ("agreed", "disputed"):
         if not args.stdin:
             raise PairError(f"--status {args.status} needs the decision on --stdin")
@@ -1910,9 +2200,188 @@ def decisions_file(base: Path) -> Path:
 
 
 def append_decision(base: Path, title: str, text: str) -> None:
-    """One log of every pair decision, read on catch-up instead of the whole message log."""
+    """One log of every pair decision, read on catch-up instead of the whole message log.
+
+    On PLAN the decision is also shown in PLAN.md under the same heading; reviewd shows it
+    once (references/reviewd.md).
+    """
     with open(decisions_file(base), "a", encoding="utf-8") as log:
         log.write(f"## {title}\n\n{text}\n\n")
+    if not impl_reached(base):
+        log_on_plan(base, "decision", f"### {title}\n\n{text}", mirror=True)
+
+
+def section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
+    """The line range of a `## ` section (heading included), outside code fences."""
+    start, fenced = None, False
+    for i, line in enumerate(lines):
+        if line.startswith("```"):
+            fenced = not fenced
+        if fenced:
+            continue
+        if start is None and line.rstrip("\n") == heading:
+            start = i
+        elif start is not None and line.startswith("## "):
+            return start, i
+    return (start, len(lines)) if start is not None else None
+
+
+def insert_in_section(text: str, heading: str, entry: str) -> str:
+    """Append the entry at the end of the section; a missing section is added at the end."""
+    block = entry.strip("\n") + "\n\n"
+    lines = text.splitlines(keepends=True)
+    bounds = section_bounds(lines, heading)
+    if bounds is None:
+        head = text.rstrip("\n")
+        return f"{head}\n\n{heading}\n\n{block}" if head else f"{heading}\n\n{block}"
+    _, end = bounds
+    head = "".join(lines[:end]).rstrip("\n")
+    return f"{head}\n\n{block}{''.join(lines[end:])}"
+
+
+def insert_before_heading(text: str, heading: str, entry: str) -> str:
+    """Put the entry above `heading`, or at the end of the file without it."""
+    block = entry.strip("\n") + "\n\n"
+    lines = text.splitlines(keepends=True)
+    bounds = section_bounds(lines, heading)
+    if bounds is None:
+        head = text.rstrip("\n")
+        return f"{head}\n\n{block}" if head else block
+    start, _ = bounds
+    head = "".join(lines[:start]).rstrip("\n")
+    return f"{head}\n\n{block}{''.join(lines[start:])}" if head else block + "".join(lines[start:])
+
+
+def load_pending(base: Path) -> list[dict]:
+    path = base / PLAN_LOG_PENDING
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except json.JSONDecodeError as exc:
+        raise PairError(f"{path} is not JSON: {exc}") from exc
+
+
+def save_pending(base: Path, pending: list[dict]) -> None:
+    path = base / PLAN_LOG_PENDING
+    if not pending:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(pending, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def plan_gate_open(base: Path) -> bool:
+    """The plannotator slot of the base shows PLAN.md (the gate or a plain annotate)."""
+    result = subprocess.run(["bash", str(PAIR_PY.parent / "plannotator-session.sh"), "--status"],
+                            cwd=base, capture_output=True, text=True, check=False)
+    status = result.stdout.strip()
+    return status.startswith("RUNNING:") and "PLAN.md" in status
+
+
+def flush_plan_log(base: Path) -> tuple[int, int]:
+    """Write the held entries into PLAN.md when it can take them: (written, still held)."""
+    pending = load_pending(base)
+    plan = base / "PLAN.md"
+    if not pending or not plan.is_file() or plan_gate_open(base):
+        return 0, len(pending)
+    text = plan.read_text(encoding="utf-8")
+    for item in pending:
+        text = insert_in_section(text, PLAN_LOG_SECTIONS[item["kind"]], item["entry"])
+    plan.write_text(text, encoding="utf-8")
+    save_pending(base, [])
+    return len(pending), 0
+
+
+def log_on_plan(base: Path, kind: str, entry: str, mirror: bool = False) -> str:
+    """Show a PLAN-stage entry in PLAN.md, or hold it until PLAN.md can take it.
+
+    `mirror`: the entry also lives in .pair/decisions.md, so it is dropped when the plan
+    closes with it still held.
+    """
+    pending = load_pending(base)
+    pending.append({"kind": kind, "entry": entry, "mirror": mirror})
+    save_pending(base, pending)
+    written, _ = flush_plan_log(base)
+    return "PLAN.md" if written else PLAN_LOG_PENDING
+
+
+def impl_log_file(base: Path, kind: str) -> Path:
+    return base / (QA_FILE if kind == "qa" else SINGLE_DECISIONS_FILE)
+
+
+def append_impl_log(base: Path, kind: str, entry: str) -> Path:
+    path = impl_log_file(base, kind)
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    text = insert_before_heading(text, REVIEWS_HEADING, entry)
+    path.write_text(text, encoding="utf-8")
+    exclude_from_git(base, f"/{path.name}")
+    return path
+
+
+def release_plan_log(base: Path) -> int:
+    """The plan closes with entries still held: they go to the IMPL logs, never into the
+    approved PLAN.md. A held pair decision is dropped: .pair/decisions.md already has it."""
+    pending = load_pending(base)
+    for item in pending:
+        if not item.get("mirror"):
+            append_impl_log(base, item["kind"], item["entry"])
+    save_pending(base, [])
+    return len(pending)
+
+
+def next_log_id(base: Path, kind: str) -> int:
+    """The next Q<n> / D<n> over PLAN.md, the held entries and the IMPL log."""
+    texts = [item["entry"] for item in load_pending(base) if item["kind"] == kind]
+    for path in (base / "PLAN.md", impl_log_file(base, kind)):
+        if path.is_file():
+            texts.append(path.read_text(encoding="utf-8"))
+    ids = [int(m) for t in texts for m in PLAN_LOG_IDS[kind].findall(t)]
+    return max(ids, default=0) + 1
+
+
+def log_entry(base: Path, kind: str, heading: str, body: str) -> str:
+    """Log one Q&A entry or one model decision of a single session, by the task stage."""
+    stage = "IMPL" if impl_reached(base) else "PLAN"
+    prefix = "Q" if kind == "qa" else "D"
+    entry = (f"### {prefix}{next_log_id(base, kind)} — {heading.format(stage=stage)}"
+             f"\n\n{body}")
+    if stage == "IMPL":
+        return str(append_impl_log(base, kind, entry))
+    return str(base / log_on_plan(base, kind, entry))
+
+
+def cmd_qa(args: argparse.Namespace) -> int:
+    """Log one question and its answers (SKILL.md, Q&A log)."""
+    base = Path(args.base).resolve()
+    body = sys.stdin.read().strip()
+    if not body:
+        raise PairError("empty entry")
+    date = time.strftime("%Y-%m-%d")
+    logged = log_entry(base, "qa", f"{args.topic} ({date}, {{stage}})", body)
+    print(json.dumps({"logged": logged}))
+    return 0
+
+
+def cmd_model_decided(args: argparse.Namespace) -> int:
+    """Log one model decision of a single session (SKILL.md, Model decisions log)."""
+    base = Path(args.base).resolve()
+    body = sys.stdin.read().strip()
+    if not body:
+        raise PairError("empty entry")
+    date = time.strftime("%Y-%m-%d")
+    logged = log_entry(base, "decision", f"{args.topic} ({date}, {{stage}}, {args.by})", body)
+    print(json.dumps({"logged": logged}))
+    return 0
+
+
+def cmd_plan_log_flush(args: argparse.Namespace) -> int:
+    """Write the held PLAN-stage entries into PLAN.md before the plan gate opens again."""
+    written, held = flush_plan_log(Path(args.base).resolve())
+    print(json.dumps({"written": written, "held": held}))
+    return 0
 
 
 def cmd_decided(args: argparse.Namespace) -> int:
@@ -1920,6 +2389,20 @@ def cmd_decided(args: argparse.Namespace) -> int:
     base = resolve_base(args.base)
     append_decision(base, f"main: {args.topic}", read_body(args))
     print(json.dumps({"logged": str(decisions_file(base))}))
+    return 0
+
+
+def cmd_user_decided(args: argparse.Namespace) -> int:
+    """Log a user decision made on IMPL, in either mode: a single session has no .pair/."""
+    base = Path(args.base).resolve()
+    words = sys.stdin.read().strip()
+    if not words:
+        raise PairError("empty decision")
+    path = base / USER_DECISIONS_FILE
+    with open(path, "a", encoding="utf-8") as log:
+        log.write(f"### {time.strftime('%Y-%m-%d')}\n\n{words}\n\n")
+    exclude_from_git(base, f"/{USER_DECISIONS_FILE}")
+    print(json.dumps({"logged": str(path)}))
     return 0
 
 
@@ -1957,7 +2440,10 @@ COMMANDS = {"send": cmd_send, "wait": cmd_wait, "status": cmd_status,
             "user-prompt": cmd_user_prompt, "session-start": cmd_session_start,
             "guard": cmd_guard, "edit-guard": cmd_edit_guard, "idle": cmd_idle,
             "restart-reviewer": cmd_restart_reviewer, "decided": cmd_decided,
-            "thread": cmd_thread, "threads": cmd_threads, "stage": cmd_stage,
+            "user-decided": cmd_user_decided, "plan-open": cmd_plan_open,
+            "qa": cmd_qa, "model-decided": cmd_model_decided,
+            "plan-log-flush": cmd_plan_log_flush,
+            "thread": cmd_thread, "threads": cmd_threads, "stage": cmd_stage, "fresh": cmd_fresh,
             "stage-handoff": cmd_stage_handoff, "claude-args": cmd_claude_args,
             "opencode-args": cmd_opencode_args}
 
@@ -1981,6 +2467,32 @@ def build_parser() -> argparse.ArgumentParser:
     decided_source = decided.add_mutually_exclusive_group(required=True)
     decided_source.add_argument("--stdin", action="store_true")
     decided_source.add_argument("--file")
+
+    user_decided = sub.add_parser("user-decided",
+                                  help="log a user decision made after the plan approval")
+    user_decided.add_argument("--base", required=True)
+    user_decided.add_argument("--stdin", action="store_true", required=True)
+
+    plan_open = sub.add_parser("plan-open", help="exit 1 once the plan is approved and closed")
+    plan_open.add_argument("--base", required=True)
+
+    qa = sub.add_parser("qa", help="log one question and its answers: PLAN.md on PLAN, "
+                                   f"{QA_FILE} on IMPL")
+    qa.add_argument("--base", required=True)
+    qa.add_argument("--topic", required=True)
+    qa.add_argument("--stdin", action="store_true", required=True)
+
+    model_decided = sub.add_parser("model-decided",
+                                   help="log a model decision of a single session: PLAN.md "
+                                        f"on PLAN, {SINGLE_DECISIONS_FILE} on IMPL")
+    model_decided.add_argument("--base", required=True)
+    model_decided.add_argument("--topic", required=True)
+    model_decided.add_argument("--by", choices=("main", "builder", "fixer"), required=True)
+    model_decided.add_argument("--stdin", action="store_true", required=True)
+
+    plan_log_flush = sub.add_parser("plan-log-flush",
+                                    help="write the held PLAN-stage entries into PLAN.md")
+    plan_log_flush.add_argument("--base", required=True)
 
     wait = sub.add_parser("wait", help="block until a message arrives (Claude side)")
     wait.add_argument("--base")
@@ -2019,7 +2531,8 @@ def build_parser() -> argparse.ArgumentParser:
     guard.add_argument("--role", choices=ROLES, required=True)
 
     edit_guard = sub.add_parser("edit-guard",
-                                help="PreToolUse hook: refuse an edit to a file of an open thread")
+                                help="PreToolUse hook: refuse an edit to a file of an open "
+                                     "thread, and to PLAN.md on IMPL")
     edit_guard.add_argument("--base")
     edit_guard.add_argument("--role", choices=ROLES, required=True)
 
@@ -2080,17 +2593,25 @@ def build_parser() -> argparse.ArgumentParser:
     threads.add_argument("--base")
 
     stage = sub.add_parser("stage", help="switch the task stage and restart the sessions on "
-                                         "its models")
+                                         "its models; PLAN to IMPL is one-way (only fresh "
+                                         "--then reviews reopens the plan)")
     stage.add_argument("stage", choices=STAGES)
     stage.add_argument("--session-id", action="append", metavar="ROLE=ID",
                        help="the conversation to resume when none is recorded")
-    stage.add_argument("--fresh", action="store_true",
-                       help="plan only: restart every agent in a new conversation on PLAN.md")
-    stage.add_argument("--foreground", action="store_true",
-                       help="restart from this process (only from outside the task session)")
-    stage.add_argument("--wait-seconds", type=float, default=30)
 
-    handoff = sub.add_parser("stage-handoff", help="internal: the detached restart of stage")
+    fresh = sub.add_parser("fresh", help="restart the writer and the reviewer in new "
+                                         "conversations on the same task")
+    fresh.add_argument("--then", choices=tuple(FRESH_STAGES),
+                       help="the first prompt and its stage: plan or reviews (PLAN), impl or "
+                            "finish (IMPL); reviews also reopens an approved plan; omitted: "
+                            "the recorded stage and a status report")
+    for p in (stage, fresh):
+        p.add_argument("--foreground", action="store_true",
+                       help="restart from this process (only from outside the task session)")
+        p.add_argument("--wait-seconds", type=float, default=30)
+
+    handoff = sub.add_parser("stage-handoff",
+                             help="internal: the detached restart of stage and fresh")
     handoff.add_argument("--old", required=True, help="the agterm session to replace")
     handoff.add_argument("--wait-seconds", type=float, default=30)
 
@@ -2104,11 +2625,11 @@ def build_parser() -> argparse.ArgumentParser:
     opencode_args.add_argument("--resume", action="store_true",
                                help="no session recorded: take the newest of the base")
 
-    for p in (stage, handoff, claude_args, opencode_args):
+    for p in (stage, fresh, handoff, claude_args, opencode_args):
         p.add_argument("--base", required=True)
         p.add_argument("--single", action="store_true",
                        help="the record of a single session (.task-stage), even beside a pair")
-    for p in (stage, claude_args, opencode_args):
+    for p in (stage, fresh, claude_args, opencode_args):
         p.add_argument("--launcher", help="the project new-task.sh, recorded for stage")
         p.add_argument("--branch", help="the task branch, with --launcher")
     return parser

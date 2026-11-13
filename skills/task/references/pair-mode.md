@@ -13,6 +13,35 @@ the same task flow with two agents: the writer is seeded with `task plan` by the
 rule as a solo session, every user gate is unchanged, and the plan gate opens only after
 the reviewer has answered on `PLAN.md`.
 
+## Pair programming (MUST FOLLOW)
+
+`task new <branch> --pair` opens the task session as a split: a writer agent (the only
+one that edits) and a read-only reviewer of the other agent kind. It is pair programming
+with a fast default (MUST FOLLOW):
+
+- **Clear case → the writer alone.** A decision, request or question that is simple,
+  that `PLAN.md`, an agreed decision, a skill or a project convention already settles,
+  or that was done before — and the writer is 100% sure — is decided, typed or answered
+  by the writer at once, with no message to the reviewer.
+- **Hard case → the pair, before the writer types.** Not simple, not clear what to do or
+  how, or not 100% sure: the writer frames the problem only, each agent forms its own
+  view without seeing the other's, and the writer merges the two; the reviewer agrees
+  only after naming the strongest objection it checked. A hard opinion question is
+  answered to the user at once (labelled `reviewer check pending`); after the loop the
+  user gets only `Reviewer agreed.` or the changed answer. A disagreement after two
+  exchanges goes to the user only when it is critical (`SKILL.md` → *Autonomy*);
+  otherwise the writer decides from the evidence and logs both positions.
+- **Code review → always the reviewer.** It reviews each change as it lands (a wrong one
+  gets `STOP:`), reviews `PLAN.md`, does the final check, and is in every code-review
+  skill run (`pair.md` → *Code review*).
+
+When in doubt, the case is hard (`pair.md` → *Decision weight*). A message that only
+runs a command or subcommand (`/task finish`, "run the tests") is not a decision: run it
+and send the peer `FYI: running <command>`. Waiting for the reviewer is not stopping: end
+the turn when no read-only work is left; the `pair.py wait` monitor or the liaison wakes
+you. With no work left at all, go idle (`pair.py idle`): restart nothing and wait for new
+work (`pair.md` → *Idle*).
+
 ## Mechanics — `scripts/pair.py`
 
 - `init`: create `.pair/` at the worktree base (cleanup removes it with the base).
@@ -26,13 +55,24 @@ the reviewer has answered on `PLAN.md`.
   `PAIR_FREE_PORT` is a test seam for the new port.
 - `stage plan|impl`: the stage change (`../SKILL.md` → *Stages*). It respawns the writer
   with the command the project launcher prints (`new-task.sh <branch> --print-command`),
-  then runs `launch --reopen`. `claude-args` / `opencode-args` print the stage flags of
-  a launch and record the session id and the launcher.
+  then runs `launch --reopen`. On IMPL `stage plan` refuses (`stages.md`). `claude-args` /
+  `opencode-args` print the stage flags of a launch and record the session id and the
+  launcher.
+- `fresh [--then plan|impl|finish]`: the same restart, in new conversations
+  (`fresh.md`). It drops the recorded sessions, marks the unread and held messages as
+  read, and passes the first prompt of the purpose to the launcher as `TASK_CONTINUE`.
+  On IMPL `--then plan` refuses.
+- `plan-open`: exit 1 on IMPL. `plan`, `review` and the gate scripts call it.
+  `edit-guard` also denies a `PLAN.md` edit on IMPL.
+- `user-decided --stdin`: appends a user decision made on IMPL to
+  `.task-user-decisions.md`. It works in both modes (`../SKILL.md` → *User decisions log*).
 - `send` / `wait` / `status`: the mailbox. A Claude Code agent runs `wait --follow` under
   the Monitor tool: one event per batch, no re-arm per batch. `send` holds an `FYI:` in
   `.pair/held/<role>/` and releases the held ones as ONE message with the next other
   message to that role, a forwarded user message, `idle`, `flush`, or at
-  `PAIR_FYI_BATCH` (default 5) held FYIs: every delivery costs the peer a turn.
+  `PAIR_FYI_BATCH` (default 5) held FYIs: every delivery costs the peer a turn. Any
+  `thread send` also releases the FYIs held for the writer. `thread close` exits 8 while
+  the thread has an unread reviewer reply.
 - `edit-guard`: the `PreToolUse` hook of a Claude writer (`Edit|Write|MultiEdit|
   NotebookEdit`, subagents included). It denies an edit to a file an `open` thread
   covers; an agreed or closed thread, `.pair/` and paths outside the base pass. It
@@ -70,9 +110,10 @@ the reviewer has answered on `PLAN.md`.
 
 ## Changing a task's mode
 
-`task switch --pair` / `task switch --single` apply to the selected worktree; `task
-pair` enables pair mode for the current one. They delegate to the project skill with
-`new <branch> --pair` or `new <branch> --single`:
+`task switch --pair` / `task switch --single` apply to the selected worktree and run
+`new-task.sh <branch> --open --pair` or `--open --single` (`references/status.md` →
+*`switch`*). `task pair` enables pair mode for the current worktree and delegates to the
+project skill with `new <branch> --pair`. All of them behave like this:
 
 - No live session → open one in the selected mode.
 - A live session already paired → only select it.
@@ -81,7 +122,8 @@ pair` enables pair mode for the current one. They delegate to the project skill 
   conversation (`claude --resume <id>` / `opencode --session <id>`, from `pair.py
   claude-args` / `opencode-args`); the reviewer starts with
   the catch-up brief. The script refuses while that writer is busy, unless the request
-  comes from the writer itself. Tell the user the old session is being replaced first.
+  comes from the writer itself. `respawn` refuses with exit 5 while the old session has a
+  companion. Tell the user the old session is being replaced first.
 
 `switch --single` on a worktree started in pair mode opens a separate single-agent
 session and keeps the paired one open. The project skill gives it a distinct name and
@@ -91,6 +133,6 @@ includes it in cleanup.
 
 **Triggers:** "task pair", "turn on pair mode", "continue this task in pair mode".
 
-Resolve the current worktree's `$branch` (SKILL.md → *Worktree helpers*). Outside a
+Resolve the current worktree's `$branch` (`references/worktree-helpers.md`). Outside a
 worktree, say `task pair` must run from inside one (or use `task switch --pair`) and
 stop. Then invoke the project `-task` skill with args `new <branch> --pair`.
