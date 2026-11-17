@@ -64,6 +64,8 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 }
 
 func runServe(ctx context.Context, settingsDir, agtermSocket string) error {
+	// log.Ctx returns a disabled logger for a context without one, so every log.Ctx line would be dropped
+	ctx = log.Logger.WithContext(ctx)
 	settings, registry, err := loadConfig(settingsDir)
 	if err != nil {
 		return err
