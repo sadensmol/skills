@@ -15,7 +15,7 @@ Every hunk you show is verbatim output of a `git` command run in this session.
 ## Step 1 — each repo's base ref
 
 Derive `$base` (`references/worktree-helpers.md`). `.task-base` is the per-repo base
-record the project's `new` writes (`references/new.md` → *`.task-base`*); `tb_diff_base`
+record the workspace's `new` writes (`references/new.md` → *`.task-base`*); `tb_diff_base`
 gives the commit each repo's own changes start from — the forkPoint in a stacked repo,
 else the merge-base with its default branch:
 

@@ -4,7 +4,8 @@ Read this before every `plannotator …` launch (`review`, `annotate`, the `PLAN
 `reviewd`, `reviewq`), and when you edit a `.md` or `.html` that an open `annotate` shows.
 
 Every `plannotator …` launch — `review`, `annotate`, `annotate PLAN.md --gate` — goes
-through the helper, **in the background** (`run-background-shell`) (MUST FOLLOW):
+through the helper with completion delivery (MUST FOLLOW). Use a notifying background
+run when the harness provides one; otherwise use the runner below:
 
 ```bash
 cd <worktree-base> && bash <sadensmol-task-skill-dir>/scripts/plannotator-session.sh <plannotator args…>
@@ -17,16 +18,16 @@ cd <worktree-base> && bash <sadensmol-task-skill-dir>/scripts/plannotator-sessio
   `PLANNOTATOR_NOT_FOUND`, tell the user to install it or export `PLANNOTATOR`, and stop.
 - It opens plannotator in its own agterm session `review <task ID>`, a companion of the
   task session (`--no-select`, through `child-session.sh`), runs it at the worktree base, prints its output, exits
-  with its status and closes that session — so the background run returns the
-  annotations as a `<task-notification>`. Outside agterm it runs plannotator directly.
+   with its status and closes that session. A notifying harness returns the result to
+   the main session; a plain detached shell does not. Outside agterm it runs directly.
 - The page opens as an agterm HTML overlay inside that review session (via
   `PLANNOTATOR_BROWSER`, default `~/.local/bin/plannotator-agterm-open`) — never on the
   task session, never in a browser. `PLANNOTATOR_OVERLAY_OPENER_NOT_FOUND` or
   `OVERLAY_OPEN_FAILED` → report it; never fall back to a browser.
-- Never a bare binary launch, never a trailing `&`, `nohup` or `disown` (the notification
-  would be lost). A foreground call freezes the session. One launch; no polling, no
-  relaunch while it runs. `REVIEW_SESSION_CLOSED` = the operator closed it: no
-  annotations, do not relaunch.
+- Never use a bare binary launch. Never leave `&`, `nohup`, or `disown` without a live
+  result-delivery path. Do not wait in a foreground shell in the main session; use the
+  runner fallback when notifications are unavailable. Launch once and do not relaunch
+  while it runs. `REVIEW_SESSION_CLOSED` means closure, not approval; do not relaunch.
 - **One live instance per worktree (MUST FOLLOW).** `review` and `annotate` share one
   slot per worktree base; the helper holds it as `<base>/.scratch/plannotator.lock`.
   Other worktrees (other tasks) run their own instance and review session in parallel —
@@ -50,6 +51,31 @@ cd <worktree-base> && bash <sadensmol-task-skill-dir>/scripts/plannotator-sessio
   treat a forced close as approval.
 - **Stale annotate.** Finish the edits, then refresh the same file under the rule above.
   Do not change review mode to refresh. No open annotate means no refresh.
+
+## Own the gate through its result (MUST FOLLOW)
+
+Opening the page is not completion. Before launch, choose a delivery method the harness
+actually supports. Never assume a background shell sends a completion notification.
+
+- **With notifications:** retain the run id and output location. Handle its completion
+  as task work, even when the user has sent another question meanwhile.
+- **Without notifications:** use one `cheap-subagent` runner in the foreground. It runs
+  the helper, waits for its result, and returns the full approval or annotation output.
+  The main session keeps the approval decision; the runner only transports the result.
+  This runner exception replaces the usual background launch, not the review helper.
+- **Already detached without a notifier:** attach one runner to that exact helper
+  process and output file. It waits for process completion and reads the final output.
+  Do not start a second review. A command timeout means keep watching the same run,
+  not approval, cancellation, or permission to go idle.
+
+On return, read the entire result. An explicit approval advances the owning workflow
+immediately: plan → implementation; diff → the authorized next step. Handle annotations
+through that workflow. A closed page, exit code, or empty result alone never means approval.
+Do not end with an acknowledgement when the next authorized action can run.
+
+After a side request or interrupted wait, inspect this task's saved result before going
+idle. If the gate completed, process it now. Never make the user announce their approval
+again in chat. Keep exactly one result consumer to avoid duplicate transitions.
 
 ## Theme (MUST FOLLOW)
 

@@ -2,16 +2,16 @@
 
 ## The generic layer (MUST FOLLOW)
 
-`sadensmol-` skills are the generic layer; project detail lives in the project plugin.
+`sadensmol-` skills are the generic layer; workspace detail lives in the workspace plugin.
 This repository is public, so **no `sadensmol-` skill may hardcode a machine-, user- or
-project-specific value**: absolute checkout paths (`/Users/<name>/…`, `/home/<name>/…`),
+workspace-specific value**: absolute checkout paths (`/Users/<name>/…`, `/home/<name>/…`),
 home directories, tool install locations, tracker sites, team/issue prefixes, or
-per-project layout. When such a value is needed, get it in this order:
+per-workspace layout. When such a value is needed, get it in this order:
 
 1. **Derive it at runtime** — from the cwd, `$HOME`, `command -v <tool>`.
 2. **Read it from an env var**, with an override taking precedence (e.g. `${PLANNOTATOR:-…}`).
-3. **Take it from the project skill** — the `<project>-*` plugin is the single place
-   project detail is written down, so defer to it.
+3. **Take it from the workspace skill** — the `<workspace>-*` plugin is the single place
+   workspace detail is written down, so defer to it.
 4. **Ask the user.** Never guess a path.
 
 When you catch a hardcoded value in a `sadensmol-` skill, replace it with one of those

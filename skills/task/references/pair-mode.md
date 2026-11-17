@@ -2,9 +2,9 @@
 
 The protocol both agents follow is `../pair.md` (each agent gets its path in its start
 brief). A liaison subagent reads only `../pair-liaison.md`; a thread reviewer reads only
-`../pair-thread.md`. This file is for the project skills' `new` and for mode changes.
+`../pair-thread.md`. This file is for the workspace skills' `new` and for mode changes.
 
-`--pair` makes the project's `new-task.sh` open the task session as a split: the
+`--pair` makes the workspace's `new-task.sh` open the task session as a split: the
 **writer** (driver, the only agent that edits) in the left pane, a read-only **reviewer**
 of the other agent kind (navigator) in the right pane — Claude Code ↔ OpenCode. The
 reviewer runs on the model of the task stage, as the writer does (`../SKILL.md` →
@@ -54,7 +54,7 @@ work (`pair.md` → *Idle*).
   lock and `reviewer_generation` in `config.json` make a second caller a no-op.
   `PAIR_FREE_PORT` is a test seam for the new port.
 - `stage plan|impl`: the stage change (`../SKILL.md` → *Stages*). It respawns the writer
-  with the command the project launcher prints (`new-task.sh <branch> --print-command`),
+  with the command the workspace launcher prints (`new-task.sh <branch> --print-command`),
   then runs `launch --reopen`. On IMPL `stage plan` refuses (`stages.md`). `claude-args` /
   `opencode-args` print the stage flags of a launch and record the session id and the
   launcher.
@@ -97,14 +97,14 @@ work (`pair.md` → *Idle*).
   real `opencode serve` (they start short model turns and abort them).
 - `user-prompt`: the `UserPromptSubmit` hook of a Claude Code agent; it forwards each
   user message to the peer. `init` writes its settings to
-  `.pair/claude-<role>-settings.json`, and a project's `new-task.sh` MUST start a Claude
+  `.pair/claude-<role>-settings.json`, and a workspace's `new-task.sh` MUST start a Claude
   writer with `--settings` pointing at that file.
 - `session-start`: the `SessionStart` hook (matcher `clear`) in the same settings file.
   After `/clear` it stops the stale waiter, refocuses an OpenCode peer's pane and
   re-arms the agent. `wait` also retires the stale waiter of its role.
 - `pair-opencode-plugin.js`: loaded by the reviewer's OpenCode config; keeps the pane on
   the pair session after a `/new` there and forwards the user's text to it.
-- A project's `new-task.sh` calls `pair.py init` and `brief` before `agtermctl session
+- A workspace's `new-task.sh` calls `pair.py init` and `brief` before `agtermctl session
   new`, and `pair.py launch` after it — only when it creates the session, never for an
   existing one.
 
@@ -113,7 +113,7 @@ work (`pair.md` → *Idle*).
 `task switch --pair` / `task switch --single` apply to the selected worktree and run
 `new-task.sh <branch> --open --pair` or `--open --single` (`references/status.md` →
 *`switch`*). `task pair` enables pair mode for the current worktree and delegates to the
-project skill with `new <branch> --pair`. All of them behave like this:
+workspace skill with `new <branch> --pair`. All of them behave like this:
 
 - No live session → open one in the selected mode.
 - A live session already paired → only select it.
@@ -126,7 +126,7 @@ project skill with `new <branch> --pair`. All of them behave like this:
   companion. Tell the user the old session is being replaced first.
 
 `switch --single` on a worktree started in pair mode opens a separate single-agent
-session and keeps the paired one open. The project skill gives it a distinct name and
+session and keeps the paired one open. The workspace skill gives it a distinct name and
 includes it in cleanup.
 
 ## `pair`
@@ -135,4 +135,4 @@ includes it in cleanup.
 
 Resolve the current worktree's `$branch` (`references/worktree-helpers.md`). Outside a
 worktree, say `task pair` must run from inside one (or use `task switch --pair`) and
-stop. Then invoke the project `-task` skill with args `new <branch> --pair`.
+stop. Then invoke the workspace `-task` skill with args `new <branch> --pair`.

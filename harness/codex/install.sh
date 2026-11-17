@@ -17,7 +17,7 @@
 #
 #   usage: harness/codex/install.sh [--dry-run]
 #
-# Nothing here is specific to a machine or a project: the repository root comes
+# Nothing here is specific to a machine or a workspace: the repository root comes
 # from this script's own location and the namespace from the marketplace
 # manifest, so a stranger's clone wires itself up the same way.
 set -eu

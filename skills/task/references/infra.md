@@ -1,12 +1,12 @@
 # Running infra — ONE companion agterm session, ONE test run against it
 
-Read this before the main session brings up a local stack. The project skill adds its
+Read this before the main session brings up a local stack. The workspace skill adds its
 own stack commands, ports and teardown command.
 
 **The main session owns every stack (MUST FOLLOW).** Bring-up is one command: the main
 session runs it itself, health-checks it, hands a test lane the healthy stack, and tears
 it down after the lane reports. No subagent ever starts, stops or restarts a stack or
-touches the lock. Use the project skill's bring-up command exactly as written (own
+touches the lock. Use the workspace skill's bring-up command exactly as written (own
 agterm session, `--no-select`, status wrapper, health check); a hand-rolled
 `bash -c '… | tee … && sleep N'`, or a fixed sleep instead of a health check, is a defect.
 
@@ -74,7 +74,7 @@ fi
   `rm -rf` a live lock.
 
 **Release in the SAME command as the teardown:** `make down && rm -rf "$LOCK"` (or the
-project's teardown). A teardown without the release blocks every later stack; a release
+workspace's teardown). A teardown without the release blocks every later stack; a release
 without the teardown hands the next caller live containers.
 
 **Stale only when BOTH hold:** the `owner` session no longer exists, and no container of
@@ -88,9 +88,8 @@ this task's stacks; the sibling scan shows other tasks. A stack started without 
 ## 1. The stack runs in its OWN companion session
 
 ```bash
-id="$(printf '%s' "$b" | grep -oiE '^[a-z]+-[0-9]+' | tr '[:lower:]' '[:upper:]')"
 AGST="$(cd <sadensmol-task-skill-dir> && pwd -P)/../agterm/scripts/agst.sh"
-sid="$(bash <sadensmol-task-skill-dir>/scripts/child-session.sh "infra <service> ${id:-$b}" --cwd "<repo>" \
+sid="$(bash <sadensmol-task-skill-dir>/scripts/child-session.sh "infra <service>" --cwd "<repo>" \
   --no-select --command "zsh -lc 'sh \"$AGST\" make up <service>'" --json | jq -r '.result.id')"
 agtermctl session text --target "$sid" --lines 5
 ```

@@ -1,0 +1,13 @@
+[Unit]
+Description=autopilot remote: close the encrypted disk when the box stops
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/autopilot-disk close
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

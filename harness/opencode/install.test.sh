@@ -174,6 +174,28 @@ case "$out" in *'no "main" agent'*) bad "agents: a present main agent is not rep
                *) ok "agents: a present main agent is not reported" ;; esac
 eq "$(jq -c .agent "$cfg")" '{"main":{"model":"someprovider/some-model"}}' "agents: the agent block is not written"
 
+h="$(new_home)"; cfg="$h/.config/opencode/opencode.json"
+echo '{"agent":{"planner":{"description":"Explores the code and writes or revises a plan file (task PLAN.md or any plan the user asks for). Edits no other file.","mode":"subagent","model":"provider/planning-model","variant":"high"}}}' > "$cfg"
+run "$h" >/dev/null 2>&1
+eq "$(jq -r '.agent["task-planner"].model' "$cfg")" "provider/planning-model" "task planner: migrates the legacy task role with its model"
+eq "$(jq -r '.agent["task-planner"].variant' "$cfg")" "high" "task planner: keeps the planning variant"
+eq "$(jq -r '.agent | has("planner")' "$cfg")" "false" "task planner: removes the legacy colliding id"
+once="$(cat "$cfg")"
+run "$h" >/dev/null 2>&1
+eq "$(cat "$cfg")" "$once" "task planner: migration is idempotent"
+
+h="$(new_home)"; cfg="$h/.config/opencode/opencode.json"
+echo '{"agent":{"planner":{"description":"Explores the code and writes or revises a plan file (task PLAN.md or any plan the user asks for). Edits no other file.","mode":"subagent","model":"provider/legacy"},"task-planner":{"model":"provider/current"}}}' > "$cfg"
+run "$h" >/dev/null 2>&1
+eq "$(jq -r '.agent["task-planner"].model' "$cfg")" "provider/current" "task planner: migration never overwrites its current model"
+eq "$(jq -r '.agent | has("planner")' "$cfg")" "false" "task planner: drops the obsolete id when the replacement already exists"
+
+h="$(new_home)"; cfg="$h/.config/opencode/opencode.json"
+echo '{"agent":{"planner":{"description":"My own planner","mode":"subagent","model":"provider/custom"},"task-planner":{"model":"provider/task"}}}' > "$cfg"
+run "$h" >/dev/null 2>&1
+eq "$(jq -r '.agent.planner.model' "$cfg")" "provider/custom" "task planner: leaves an unrelated planner alone"
+eq "$(jq -r '.agent["task-planner"].model' "$cfg")" "provider/task" "task planner: keeps an existing task-specific model"
+
 # One MCP name delegates to workspace-specific settings.
 h="$(new_home)"; cfg="$h/.config/opencode/opencode.json"
 echo '{"model":"provider/model","mcp":{"existing":{"type":"remote","url":"https://existing.example/mcp"}}}' > "$cfg"
@@ -211,6 +233,34 @@ HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=missing python3 "$REPO/harness
 eq "$rc" "1" "workspace MCP: unknown workspace cannot use another account"
 HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID='' python3 "$REPO/harness/opencode/workspace-mcp.py" tracker >/dev/null 2>&1; rc=$?
 eq "$rc" "1" "workspace MCP: missing workspace stops instead of choosing an account"
+
+# The local registry of a workspace's session folder wins over its skills, but only when it
+# names that agterm workspace.
+mkdir -p "$h/ws/gamma/.workspace" "$h/ws/gamma/sub" "$h/ws/other/.workspace" "$h/.agents/skills/gamma/tracker"
+echo '{"agterm_workspace":"gamma"}' > "$h/ws/gamma/.workspace/settings.json"
+jq -n '{opencode:{mcp:{tracker:{type:"local",command:["sh","-c","printf local"]}}}}' > "$h/ws/gamma/.workspace/workspace.json"
+echo '{"agterm_workspace":"delta"}' > "$h/ws/other/.workspace/settings.json"
+jq -n '{opencode:{mcp:{tracker:{type:"local",command:["sh","-c","printf wrong"]}}}}' > "$h/ws/other/.workspace/workspace.json"
+jq -n '{mcp:{tracker:{type:"local",command:["sh","-c","printf skills"]}}}' > "$h/.agents/skills/gamma/tracker/opencode.json"
+chmod 700 "$h/ws/gamma/.workspace" "$h/ws/other/.workspace"
+chmod 600 "$h/ws/gamma/.workspace/"*.json "$h/ws/other/.workspace/"*.json
+cat > "$h/bin/agtermctl" <<SH
+#!/bin/sh
+echo '{"result":{"tree":{"workspaces":[{"id":"g","name":"gamma","sessions":[{"id":"s1","cwd":"$h/ws/other"},{"id":"s2","cwd":"$h/ws/gamma/sub"}]}]}}}'
+SH
+out="$(HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=g python3 "$REPO/harness/opencode/workspace-mcp.py" tracker 2>/dev/null)"
+eq "$out" "local" "workspace MCP: local registry of the workspace wins, another workspace's is skipped"
+chmod 755 "$h/ws/gamma/.workspace"
+out="$(HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=g python3 "$REPO/harness/opencode/workspace-mcp.py" tracker 2>/dev/null)"
+eq "$out" "skills" "workspace MCP: a .workspace/ others can read (a clone) is not trusted"
+chmod 700 "$h/ws/gamma/.workspace"
+git -C "$h/ws/gamma" init -q && git -C "$h/ws/gamma" add -f .workspace
+out="$(HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=g python3 "$REPO/harness/opencode/workspace-mcp.py" tracker 2>/dev/null)"
+eq "$out" "skills" "workspace MCP: a .workspace/ tracked by git is not trusted"
+rm -rf "$h/ws/gamma/.git"
+rm "$h/ws/gamma/.workspace/workspace.json"; echo '{}' > "$h/ws/gamma/.workspace/workspace.json"
+out="$(HOME="$h" PATH="$h/bin:$PATH" AGTERM_WORKSPACE_ID=g python3 "$REPO/harness/opencode/workspace-mcp.py" tracker 2>/dev/null)"
+eq "$out" "skills" "workspace MCP: no local entry falls back to the workspace's skills"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

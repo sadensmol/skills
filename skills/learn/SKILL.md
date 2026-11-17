@@ -12,40 +12,40 @@ Integrate new knowledge into existing skills **within the `sadensmol` namespace 
 This skill **only** edits skills owned by the `sadensmol` plugin (i.e. `sadensmol-*` skills, whose source lives in the sadensmol skills repository's `skills/` directory).
 
 **Never** use this skill to modify:
-- Other projects'/plugins' skills (any non-`sadensmol-` namespaced skill) — those have their own repos/owners.
+- Other workspaces'/plugins' skills (any non-`sadensmol-` namespaced skill) — those have their own repos/owners.
 - Built-in or third-party skills.
 - Project files, `CLAUDE.md`, or arbitrary documentation.
 
-If the knowledge belongs outside the sadensmol namespace, **stop** and tell the user where it should go instead — do not edit it here. Example: "That's project-specific — update the project's own skill in its repo, not here."
+If the knowledge belongs outside the sadensmol namespace, **stop** and tell the user where it should go instead — do not edit it here. Example: "That's workspace-specific — update the workspace's own skill in its repo, not here."
 
-## General vs project-specific (decide BEFORE editing)
+## General vs workspace-specific (decide BEFORE editing)
 
-Load `sadensmol-sadensmol` first (MUST FOLLOW). It owns the layer rules, hooks and the
+Load `sadensmol` first (MUST FOLLOW). It owns the layer rules, hooks and the
 where-does-it-go table; this section is its short form.
 
 The general sadensmol skills (`programming`, `programming-go`, `programming-typescript`,
 `programming-dart`, `github`, `linear`, …) hold ONLY knowledge that is reusable
-across every project. **Project/product-specific knowledge must NOT be inlined
+across every workspace. **Workspace/project-specific knowledge must NOT be inlined
 into a general skill.**
 
-Tell-tale signs a learning is project-specific (→ belongs in that project's own
+Tell-tale signs a learning is workspace-specific (→ belongs in that workspace's own
 skill, which is out of scope here): it names a specific repo, service, deploy
 pipeline, environment, auth profile, business entity, or workflow — e.g. a
-particular e2e suite, `AWS_PROFILE=<project>`, a named game/currency, a
+particular e2e suite, `AWS_PROFILE=<workspace>`, a named game/currency, a
 `task finish` step, a specific CI workflow.
 
 Route by which parts are general vs specific:
 
 - **Purely general** → integrate into the matching general sadensmol skill.
-- **Purely project-specific** → STOP; tell the user it belongs in the project's
-  own skill (`<project>-<project>` / `<project>-task`), not here.
+- **Purely workspace-specific** → STOP; tell the user it belongs in the workspace's
+  own skill (`<workspace>-<workspace>` / `<workspace>-task`), not here.
 - **Both** → split. Put the *general principle* in the general skill and have it
-  **point to the project-specific skill** for the concrete mechanics — never
-  embed the project's commands/env/entities in the general skill. Example: a
+  **point to the workspace-specific skill** for the concrete mechanics — never
+  embed the workspace's commands/env/entities in the general skill. Example: a
   generic "to debug a test against a deployed env, run it locally" principle goes
-  in `programming-go` ONLY as "follow the project's own
+  in `programming-go` ONLY as "follow the workspace's own
   skill for how to run it"; the actual `AWS_PROFILE=…`, env names, and CI steps
-  live in the project skill.
+  live in the workspace skill.
 
 ## Workflow
 

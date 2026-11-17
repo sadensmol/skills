@@ -22,10 +22,10 @@ Guidance for working on a live NVIDIA **Jetson Orin Nano 8 GB** running
 | Memory | **8 GB unified** CPU+GPU (~7.4 GB usable); NVMe (Crucial P310, fast) |
 | No | `nvidia-smi` (use `tegrastats`); no `jetson-containers`/`autotag` on JP7 |
 
-**Address, SSH user, container names and deploy layout are per-project — never
-hardcoded here.** Take them from the project's own skill (the `<project>-*`
+**Address, SSH user, container names and deploy layout are per-workspace — never
+hardcoded here.** Take them from the workspace's own skill (the `<workspace>-*`
 plugin loaded for the session), from an env var, or ask. Below, `$JETSON_HOST`
-means that project's `<user>@<host>` and `<ctr>` its container name.
+means that workspace's `<user>@<host>` and `<ctr>` its container name.
 
 ## Connecting over SSH (and debugging without wedging it)
 
@@ -41,7 +41,7 @@ the `IMAGE_TAG` caveat: `references/ssh-and-debug.md`.
 command that reaches the board (SSH, `scp`, `rsync`), ask the user for explicit
 permission — name the host and what you intend to run (e.g. "read the app
 container logs"). Wait for a clear yes. If the user declines, stop — do not
-connect. A project skill may grant standing permission for its own board; that
+connect. A workspace skill may grant standing permission for its own board; that
 overrides this.
 
 ```bash

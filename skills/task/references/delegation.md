@@ -1,6 +1,6 @@
 # Forwarding `new` and `plan`
 
-Read this before you forward `new` or `plan` to the project skill.
+Read this before you forward `new` or `plan` to the workspace skill.
 
 **OpenCode mode for `plan`:** When a new OpenCode session starts `task plan`, use the
 write-enabled `task` mode. Do not use OpenCode's read-only `plan` mode. The `plan`
@@ -12,7 +12,7 @@ application code until approval.
   `X`") goes down verbatim: `/task new abc-2-foo --base abc-1-foo` → args `new abc-2-foo
   --base abc-1-foo`; `/task new abc-2-foo based on ABC-1` → args `new abc-2-foo based on
   ABC-1`. Do not resolve it to a PR, SHA or `origin/<branch>`, and do not drop it as stray
-  prose. The project's `new` resolves a base task to its PRs per repo
+  prose. The workspace's `new` resolves a base task to its PRs per repo
   (`references/new.md` → *Based on a task*); its `finish` opens the stacked PRs and
   registers the GitHub stack (`sadensmol-github` → "Stacked Pull Requests"); never do
   either here.

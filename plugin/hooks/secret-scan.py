@@ -163,8 +163,9 @@ def report(findings):
         sys.stderr.write(f"  {path}:{lineno}: {reason}\n      {snippet}\n")
     sys.stderr.write(
         "\nGeneralize the value, mask it with ***, or reference an env var.\n"
-        "False positive? add `# pragma: allowlist secret` on the line, a regex to\n"
-        f"{root}/.secret-scan-allow, or commit with SECRET_SCAN_DISABLE=1.\n\n"
+        "False positive? Ask the user first. Only with their permission, add\n"
+        "`# pragma: allowlist secret` on the line or a regex to\n"
+        f"{root}/.secret-scan-allow. Never bypass this check on your own.\n\n"
     )
 
 
@@ -182,7 +183,7 @@ def main():
         if payload.get("tool_name") != "Bash":
             return 0
         command = (payload.get("tool_input") or {}).get("command", "")
-        if not re.search(r"\bgit\b.*\bcommit\b", command):
+        if not re.search(r"\bgit(\s+-[Cc]\s+\S+)*\s+commit\b", command):
             return 0
         diff = git(["diff", "--cached", "-U0", "--no-color"])
         if re.search(r"(^|\s)(-a\b|--all\b|-[a-zA-Z]*a[a-zA-Z]*\b)", command):

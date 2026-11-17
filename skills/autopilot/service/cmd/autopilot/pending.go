@@ -1,0 +1,20 @@
+package main
+
+import (
+	"context"
+	"time"
+)
+
+func timeNow() time.Time { return time.Now() }
+
+// sleepContext waits for d, or returns the context's error when the context ends first.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}

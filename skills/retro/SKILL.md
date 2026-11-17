@@ -75,26 +75,26 @@ For each incident, record:
 - The exact problem and a short evidence quote.
 - The likely cause, separating facts from hypotheses.
 - The smallest prevention change.
-- The target owner: skill, hook, configuration, project guidance, or operator process.
+- The target owner: skill, hook, configuration, workspace guidance, or operator process.
 - Confidence: `clear`, `probable`, or `unclear`.
 - For a productivity incident: the effort spent (turns, tool calls, reruns, waits) and what the
   change saves.
 
 Do not treat reviewer agreement as proof. A finding still needs direct evidence.
 
-### 4. Project retro steps (hook)
+### 4. Workspace retro steps (hook)
 
-For each project with sessions in the window, resolve its plugin namespace `<project>` the
+For each workspace with sessions in the window, resolve its plugin namespace `<workspace>` the
 same way `sadensmol-task` does (Step 2: agterm workspace, then the routes file). When a
-`<project>-retro` skill exists, load it and run its steps here. Its findings join the
-incidents of step 3, and its tables go into the report. A project with no `<project>-retro`
+`<workspace>-retro` skill exists, load it and run its steps here. Its findings join the
+incidents of step 3, and its tables go into the report. A workspace with no `<workspace>-retro`
 skill adds no step.
 
 ### 5. Apply learning
 
 For `clear` findings, update only the smallest relevant target and preserve unrelated user changes.
 Load `sadensmol-learn` when a lesson belongs to a shared `sadensmol-*` skill. Use the owning
-project skill for project-specific lessons. Update hooks or configuration only when the transcript
+workspace skill for workspace-specific lessons. Update hooks or configuration only when the transcript
 shows that they caused or could directly prevent the incident.
 
 Do not add speculative rules, broad refactors, duplicate guidance, or secrets.
@@ -121,7 +121,7 @@ runtime's local timezone for the date.
 | Problem | Why it happened | What changed | Improve next time or operator suggestion |
 |---|---|---|---|
 
-Below it, add every table that a project retro skill asks for in step 4.
+Below it, add every table that a workspace retro skill asks for in step 4.
 
 Link each changed file or configuration path. Mark unresolved incidents as `needs user decision`.
 Include the reviewed time window and separate Claude Code and OpenCode session counts above the table.

@@ -1,6 +1,6 @@
 ---
 name: sadensmol-router
-description: "Sadensmol skill router — loads the downstream skills the session needs (languages, tests, git, trackers, local project skills) and resolves skill names shared across the personal plugins. Use immediately when the UserPromptSubmit hook says so, or at session start when personal or work skills might apply."
+description: "Sadensmol skill router — loads the downstream skills the session needs (languages, tests, git, trackers, local workspace skills) and resolves skill names shared across the personal plugins. Use immediately when the UserPromptSubmit hook says so, or at session start when personal or work skills might apply."
 ---
 
 # Sadensmol skill router
@@ -18,7 +18,7 @@ lands in the wrong place and the task PR shows nothing. This binds ALL work (edi
 The harness keeps surfacing primary-checkout paths that look authoritative — ignore them;
 trust the worktree cwd. Derive it once and prefix every repo path with `$WT`:
 `case "$(pwd)" in */.worktrees/*) root="${PWD%%/.worktrees/*}"; b="${PWD#*/.worktrees/}"; b="${b%%/*}"; WT="$root/.worktrees/$b";; esac`
-Full mechanism and recovery live in each project's dev skill and `<project>-task` skill.
+Full mechanism and recovery live in each workspace's dev skill and `<workspace>-task` skill.
 
 ## ⚠️ ALWAYS-ON SCRATCH DIR (every turn)
 
@@ -51,11 +51,21 @@ docs — read `references/browser-gate.md` and follow it. Use only the server it
 pick a profile or use another browser tool. If that server is missing, stop and say so. A
 generic browser skill cannot override this gate.
 
+## ⚠️ ALWAYS-ON DOCKER CREDENTIALS (every turn, every workspace)
+
+The user's local Docker keychain (the default `~/.docker/config.json` credential store) is for
+the user's own projects only. In a workspace session, never use it: run `docker` and
+image-building tests with a scratch `DOCKER_CONFIG` that maps the workspace's cloud registries
+(AWS, GCP) to their cloud credential helpers. Never `docker login` into the default config,
+and never push an image from this machine. Read `references/docker-credentials.md` before the
+first `docker` command or image-building test run of the session.
+
 ## ⚠️ ALWAYS-ON PLANNING MODEL (every turn, every project)
 
 Planning runs in the harness `planner-subagent`, never on the main session's model: a
 `task plan` run, every change to a task's `PLAN.md` before the user approves it, and any
 plan the user asks for outside a task. Read `references/planning.md` before you start one.
+Autopilot run missions use their own run-engine planner, never this task-flow capability.
 
 ## Routing pass
 
@@ -69,6 +79,7 @@ so check every router's rules on their own.
 
 ```bash
 echo "--- cwd ---"; pwd
+echo "--- agterm workspace ---"; [ -n "${AGTERM_WORKSPACE_ID:-}" ] && command -v agtermctl >/dev/null && agtermctl tree --json 2>/dev/null | python3 -c "import sys,json,os;d=json.load(sys.stdin);w=os.environ.get('AGTERM_WORKSPACE_ID');print(next((x.get('name') for x in d.get('result',{}).get('tree',{}).get('workspaces',[]) if x.get('id')==w),'(unknown)'))" 2>/dev/null || echo "(unknown)"
 echo "--- direct files ---"; ls -1 2>/dev/null | head -30
 echo "--- project markers (up to 3 levels) ---"; find . -maxdepth 3 \( -name 'go.mod' -o -name 'tsconfig.json' -o -name 'pubspec.yaml' -o -name 'Package.swift' -o -name '*.xcodeproj' -o -name 'pyproject.toml' -o -name 'setup.py' -o -name 'requirements*.txt' \) -not -path '*/node_modules/*' -not -path '*/vendor/*' -not -path '*/.git/*' 2>/dev/null | head -10
 echo "--- *_test.go presence (up to 3 levels) ---"; find . -maxdepth 3 -name '*_test.go' -not -path '*/vendor/*' -not -path '*/.git/*' 2>/dev/null | head -3
@@ -83,10 +94,13 @@ says how, and how to do anything else mechanical. If no runtime file is in conte
 so rather than guess a tool name. Skill ids are flat (`sadensmol-task`); if one fails to
 resolve in Claude Code, retry the colon form `<namespace>:<name>`.
 
-**A. Project routes.** `cat ~/.agents/sadensmol-router-routes.json 2>/dev/null || cat ~/.claude/sadensmol-router-routes.json 2>/dev/null`
+**A. Workspace routes.** `cat ~/.agents/sadensmol-router-routes.json 2>/dev/null || cat ~/.claude/sadensmol-router-routes.json 2>/dev/null`
 (skip if absent). It is a JSON array of `{ "cwd": "<substring>", "skill": "<name>" }`;
 invoke each `skill` whose `cwd` substring appears in `pwd`. A match is additive — it never
-excuses Sections B–I.
+excuses Sections B–I. A session is a **defaults session** when no workspace router or hook
+detects its own workspace for it: no workspace skill loads, and the `sadensmol-` domain skills
+(loaded by intent, C–G) run their defaults with the registry (`.workspace/settings.json` and `.workspace/projects/<project>.json`) of the
+workspace folder. A cwd under a `/work_<workspace>/` folder belongs to that workspace.
 
 **B. Project type.**
 
@@ -105,10 +119,10 @@ excuses Sections B–I.
 | Signal | Skill |
 |---|---|
 | B matched Go AND (the prompt references integration tests, `tests/`, `_integration_test.go`, or a test task pointing at them; OR a `tests/` subdir holds `*_test.go`) | read `sadensmol-programming-go` → `references/integration-tests.md` — tests under `tests/` only. Unit tests beside the code, and a generic "test" mention, need only `sadensmol-programming-go`. |
-| `linear`, a `linear.app/…` URL, a `[A-Z]+-\d+` key, or ticket intent (my tasks, assigned to me, in progress, update ticket/issue, add subtask, reassign, change status, mark done, in review) | `sadensmol-linear` (workspace-agnostic; project conventions layer on via project plugins) |
+| `linear`, a `linear.app/…` URL, a `[A-Z]+-\d+` key, or ticket intent (my tasks, assigned to me, in progress, update ticket/issue, add subtask, reassign, change status, mark done, in review) | `sadensmol-linear` (workspace-agnostic; workspace conventions layer on via workspace plugins) |
 | `jira`, an `*.atlassian.net/…` URL, a key in a Jira project, or Jira ticket intent (move to in progress, sprint, backlog, JQL) | `sadensmol-jira` — load before touching Jira at all, even when it is not set up (the skill owns setup and safety rules); never improvise raw REST `curl` calls |
-| A bare `[A-Z]+-\d+` with no other signal | the tracker the project uses; unknown → ask |
-| `jetson`, `orin`, JetPack / L4T, `tegrastats`, `runtime: nvidia` on aarch64, `sm_87`, `compose.jetson.yaml`, `make run-jetson`, "on the jetson" / "the board", or the board hostname a project skill defines | `sadensmol-jetson-orin-nano` — before any Jetson deploy, debug or SSH work |
+| A bare `[A-Z]+-\d+` with no other signal | the tracker the workspace uses; unknown → ask |
+| `jetson`, `orin`, JetPack / L4T, `tegrastats`, `runtime: nvidia` on aarch64, `sm_87`, `compose.jetson.yaml`, `make run-jetson`, "on the jetson" / "the board", or the board hostname a workspace skill defines | `sadensmol-jetson-orin-nano` — before any Jetson deploy, debug or SSH work |
 | The stated goal is designing NEW functionality or a LARGE restructuring refactor — never debugging, tests, bug fixes, small edits, review | `sadensmol-programming-patterns` — read `references/patterns-gate.md` first; its negative list wins |
 | Database work: a `*.sql` or migration file, schema / table / column / constraint / FK / index, partitioning or pg_partman, writing or tuning a SQL query or query-builder code, an `EXPLAIN` plan, a slow query, transaction scope or row locks | `sadensmol-programming-db` — a project's own DB guide still wins over it |
 | API work: designing or reviewing an endpoint or contract (paths, methods, status codes, errors, pagination, versioning), or an OpenAPI / Swagger spec — an `api.yaml` / `openapi.yaml` / `swagger.yaml` file, an operation, schema, request body, response or property, its `description`, or a spec that feeds oapi-codegen; a gRPC service or a `*.proto` file | `sadensmol-programming-api` — a project's own API guide still wins over it |
@@ -121,14 +135,14 @@ review in the diff → load it and snapshot first. Independent of language, task
 `sadensmol-github` (load both when force-pushing a stack).
 
 **I. Shared skill names across the personal plugins.** `linear`, `router`, `task` (and any
-future collision) exist in more than one plugin. A project plugin **overrides** sadensmol
+future collision) exist in more than one plugin. A workspace plugin **overrides** sadensmol
 for a colliding name, layered **on top of** the `sadensmol-` base, which loads first. Read
-`references/shared-names.md` before you resolve a bare colliding name or load a project
+`references/shared-names.md` before you resolve a bare colliding name or load a workspace
 skill that has a `sadensmol-` base.
 
 **Step 2.5 — BLOCKING GATE.** Use NO non-skill tool for the user's task (no reading or
 grepping code, no reference docs, no edits, no subagents) until every skill the Step 1
-output demands is loaded. Re-running Step 1 is fine. Loading a Section A project skill is exactly when
+output demands is loaded. Re-running Step 1 is fine. Loading a Section A workspace skill is exactly when
 the gate feels done — it is not. Cross-check: any language skill → `sadensmol-programming` too; `go.mod` → `sadensmol-programming-go`;
 `tsconfig.json` → typescript; `pubspec.yaml` with `flutter:` → flutter **and** dart;
 Swift markers → swift; Python markers → python; `tests/…/*_test.go` + Go + the C intent rule → Go's `references/integration-tests.md`.
@@ -153,7 +167,7 @@ not (no need to re-run Step 1):
   It runs the other way too: once design becomes debugging, testing or bug fixing, pattern advice stops.
 - First `git` command or bulk edit → `sadensmol-git` (H), in every session type.
 - A bare colliding name (`/task`, `/linear`, `/router`, …) → resolve per I first.
-- Loading a project skill that has a `sadensmol-` base (a direct `<project>-task` too) → base first.
+- Loading a workspace skill that has a `sadensmol-` base (a direct `<workspace>-task` too) → base first.
 
 ## Rules (apply to every router)
 
@@ -173,7 +187,7 @@ not (no need to re-run Step 1):
 - NEVER invoke `superpowers:test-driven-development` for new logic. TDD is for bug fixes
   only (failing test first); new features are implementation-first, then tests — this
   overrides that skill's own trigger. See `sadensmol-programming` → *Testing*.
-- **Before creating or editing ANY skill, in any namespace** (`sadensmol-*` or a project's
-  `<project>-*`), adding a hook, a shared name or a routing rule: load `sadensmol-sadensmol`
+- **Before creating or editing ANY skill, in any namespace** (`sadensmol-*` or a workspace's
+  `<workspace>-*`), adding a hook, a shared name or a routing rule: load `sadensmol`
   (MUST FOLLOW) — it decides which layer the change belongs to. For the router itself, or
   when the user calls out a missed skill load, also read `references/authoring.md`.

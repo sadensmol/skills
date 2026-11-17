@@ -13,7 +13,7 @@ owns everything generic:
 - the split launch (`launch`).
 
 OpenCode is woken through `prompt_async` on its `--port` server. Claude Code is woken by
-a background `pair.py wait` that exits when a message arrives. Each project's
+a background `pair.py wait` that exits when a message arrives. Each workspace's
 `new-task.sh` only parses `--pair` and calls `pair.py`. The protocol the agents follow
 is `sadensmol-task/pair.md`.
 
@@ -1296,7 +1296,7 @@ Insert before the line `## Session branches — every parallel unit of work runs
 ```markdown
 ## Pair mode (`task new <branch> --pair`)
 
-`--pair` makes the project's `new-task.sh` open the task session as a split. A
+`--pair` makes the workspace's `new-task.sh` open the task session as a split. A
 **writer** agent runs in the left pane, and a read-only **reviewer** of the other agent
 kind runs in the right pane (Claude Code ↔ OpenCode). Without `--pair` nothing changes.
 A worktree that already has `.pair/config.json` re-opens in pair mode by itself.
@@ -1308,7 +1308,7 @@ A worktree that already has `.pair/config.json` re-opens in pair mode by itself.
   - `brief`: the start text for a role;
   - `launch`: split, reviewer start, OpenCode session binding;
   - `send` / `wait` / `status`: the mailbox.
-- A project's `new-task.sh` calls `pair.py init` and `brief` before `agtermctl session
+- A workspace's `new-task.sh` calls `pair.py init` and `brief` before `agtermctl session
   new`, and `pair.py launch` after it. It calls them only when it creates the session,
   never for an existing one.
 - `.pair/` lives at the worktree base. Cleanup removes it with the base.
@@ -1320,7 +1320,7 @@ Triggers: "task new <branch> --pair", "new task with a reviewer", "pair mode".
 
 Run: `grep -n "pair.md\|pair.py" skills/task/SKILL.md && grep -niE "swipegames|memoresse|/Users/" skills/task/pair.md skills/task/scripts/pair.py skills/task/SKILL.md; echo "exit=$?"`
 Expected: the first grep lists the new section's lines. The second prints nothing and
-`exit=1`, which means no project names or user paths.
+`exit=1`, which means no workspace names or user paths.
 
 - [ ] **Step 4: Checkpoint**
 

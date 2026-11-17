@@ -112,8 +112,9 @@ Check these in order:
 
 - **Restart after selecting Live sessions.** The restore mode is fixed when agterm starts. Changing
   **Settings ▸ General ▸ Restore sessions** affects the next process, not sessions already open.
-- **Read the eligibility reason in Settings.** Live mode requires zsh or fish as the macOS login shell and the
-  bundled zmx and shell-integration resources (`ZDOTDIR` for zsh, `XDG_DATA_DIRS` for fish). If the launch
+- **Read the eligibility reason in Settings.** Live mode requires zsh or fish as the macOS login shell (or as the
+  absolute path in the ghostty `command` agterm loads, including an inherited global config and
+  `config-file` includes, last value winning, read only at launch) and the bundled zmx and shell-integration resources (`ZDOTDIR` for zsh, `XDG_DATA_DIRS` for fish). If the launch
   cannot use live mode, every pane starts as an ordinary shell.
 - **Inspect actual backing with `tree --json`.** Primary and split surfaces report `backedByZmx`; the session
   field is true only when every existing primary or split is backed. The sidebar deliberately has no zmx
@@ -142,6 +143,17 @@ Check these in order:
   session keeps the zmx it was created with through app updates. `agtermctl zmx list` marks such rows
   `outdated`; Agterm ▸ Reset Live Sessions… (or `agtermctl zmx reset --force`) recreates them on the current
   zmx, with the same cost as any reset: running work stops and agent conversations need resuming.
+- **An older live session cannot reach the local network after an update, or reports `No user exists for
+  uid 501` after a forced logout.** A changed helper build or a new login gets its own session host, and a session
+  keeps the host it started under; `agtermctl tree --json` marks it `liveHostStale`. Agterm ▸ Reset Live
+  Sessions… (or `agtermctl zmx reset --force`) moves it to the current host, with the same cost as any reset;
+  at every launch agterm asks each earlier host to stop, and one stops once no live session runs under it.
+- **Live sessions close about 30 seconds after a GUI program starts from one.** macOS force-quits a program
+  switched off in System Settings ▸ General ▸ Login Items ▸ Allow in the Background, together with the
+  coalition it started in (#985). On macOS 27 and later the session host runs as its own launchd job, so
+  only the program goes. A session under a host from an earlier build stays exposed until Agterm ▸ Reset Live
+  Sessions…; one whose host fell back after a `session host job ... failed` log line stays exposed, and a
+  reset does not help. Switching the program on in Allow in the Background stops it in every case.
 - **Switching modes ends detached live processes.** Selecting Fresh shells or Re-run commands and restarting
   reaps the live daemons in this state directory. An unavailable launch that still requests Live sessions
   preserves its claimed daemons for a later eligible launch.
@@ -244,6 +256,12 @@ gives agterm Full Disk Access, which covers all of them at once. A dismissed pro
 not permitted` for the privacy denial, `Permission denied` for ordinary permission bits, and some `ls`
 replacements print the same wording for both. Needing the grant is macOS policy, not an agterm bug: do not
 file it.
+
+### "a dropped screenshot reaches a Live pane but cannot be read"
+
+The pane gets the thumbnail's `TemporaryItems/NSIRD_screencaptureui_*` path, but opening it fails with
+`Operation not permitted` and Claude Code drops the image silently. In the reported case Full Disk Access fixed
+it without a restart; see the [screenshot read diagnosis](https://github.com/umputun/agterm/blob/master/docs/troubleshooting.md#a-dropped-screenshot-reaches-a-live-pane-but-cannot-be-read).
 
 ### "agterm would like to access data from other apps, over and over"
 
@@ -387,6 +405,10 @@ there: link detection follows the program's mouse request, not that setting.
 
 ## Reporting: decide bug vs unsupported FIRST
 
+- A bug or a wanted change **in a cookbook recipe** whose Author line names someone other than @umputun →
+  a pull request against the recipe, never an issue; see
+  <https://github.com/umputun/agterm/blob/master/cookbook/CONTRIBUTING.md#bugs-and-improvements>. Bugs in
+  @umputun's recipes, and agterm bugs a recipe exposes, are reported as below.
 - A **supported** thing misbehaves (a documented command/feature does the wrong thing, a crash, a parse
   bug) → a GitHub **issue**.
 - The user wants something **not supported**, or it is a question / idea / "can it do X" → a GitHub

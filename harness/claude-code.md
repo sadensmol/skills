@@ -23,10 +23,10 @@ todo list exists.
 
 ## browser
 
-The same Playwright MCP extension servers as OpenCode: the workspace server the project's browser
+The same Playwright MCP extension servers as OpenCode: the workspace server the workspace's browser
 policy names when one is configured, otherwise `playwright-extension`. Read that policy before the
 first browser call. Claude in Chrome (`mcp__claude-in-chrome__*`) is not the authenticated browser —
-never use it for a project page.
+never use it for a workspace page.
 
 1. The server's `browser_tabs` with `action: "list"`, then `action: "select"` an existing tab.
 2. Its `browser_navigate` only when needed.

@@ -21,8 +21,8 @@ diff routinely spans several languages and the cwd is only one of them): `*.go` 
 `*.dart` → `sadensmol-programming-flutter` + `sadensmol-programming-dart`; `*.ts`/`*.tsx`
 → `sadensmol-programming-typescript`; `*.swift` → `sadensmol-programming-swift`; `*.py` → `sadensmol-programming-python`; any
 language → `sadensmol-programming` too. Then
-also invoke `sadensmol-router` and any project router whose cwd matches
-(`<project>-router`). Skip skills already loaded.
+also invoke `sadensmol-router` and any workspace router whose cwd matches
+(`<workspace>-router`). Skip skills already loaded.
 
 Then load **`security-audit`**. It is installed from upstream
 (`https://github.com/cloudflare/security-audit-skill`); it is not part of this repository.

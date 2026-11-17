@@ -60,7 +60,12 @@ window for test rows only, never for production rows.
 
 Design the FKs so that every old partition can still be detached. Check this when you
 create the first FK between two time-partitioned tables, not when retention first runs in
-production. By then, the fix needs a data rebuild.
+production. By then, the fix needs a migration of live tables.
+
+**The rule.** When old periods must be detached and kept, co-partition every dependent
+table by the root's partition key, with the same bounds. Create each FK leaf to leaf, for
+the same period. Never create a FK on a partitioned parent that references another
+partitioned table.
 
 **How Postgres blocks the detach.** The example is `orders` ← `order_items`. Both are
 partitioned by month, and `order_items (order_id, order_created_at)` references
@@ -74,15 +79,21 @@ partitioned by month, and `order_items (order_id, order_created_at)` references
   keeps its FK to the live parent. So `orders_pM` can never detach while the archived
   `order_items_pM` holds rows. Detach order does not help: detaching the leaf first leaves
   the same FK on the archive.
+- Clean data does not help. With 0 cross-period rows, and in any detach order, a
+  parent-level FK still blocks detach-and-keep. Tested locally (PG 17.7, pg_partman 5.2.4);
+  not yet proven on a managed cloud database.
 - Cross-period references make it worse. A child row gets `created_at = now()`, but its
   parent was created earlier. If the child table is partitioned by its own `created_at`,
   `order_items_pM+1` references `orders_pM`, and no month boundary is clean.
-- A row in a default partition is checked only against the referenced table's default
-  partition. When no matching partition exists, inserts land in `_default` and fail the FK
-  even though the referenced row exists.
+- A parent-level FK checks a row in a default partition against the whole referenced
+  parent. The FK that Postgres clones to `order_items_default` references `orders`, not
+  `orders_default`. So a row there whose root is in a named period (`orders_pM`) is
+  accepted, and an orphan is rejected. Only a FK that you create on the default leaf
+  itself checks the one table that it names. Tested locally (PG 17.7); not yet proven on a
+  managed cloud database.
 
 **Approach 1: co-partition by the root key.** Use it when old partitions must be detached
-and the FKs must stay.
+and the FKs must stay. A new FK-linked set uses it from its first migration.
 
 - Copy the root row's partition key into every dependent table (`order_created_at`), and
   partition each dependent table by that column, not by its own `created_at`.
@@ -92,26 +103,90 @@ and the FKs must stay.
   create the FK on the parent tables.
 - Result: every row of one root lands in the same period, in every table. Each period then
   detaches in any order. The archived tables keep their FKs, the live FKs stay enforced,
-  and orphan inserts are rejected. This was tested on PG 15 with pg_partman 5.4.3.
+  and orphan inserts are rejected. This was tested on PG 15 with pg_partman 5.4.3, and on
+  PG 17.7 + pg_partman 5.2.4, locally.
 - Costs:
-  - Existing tables must be rebuilt with a data copy.
+  - Existing tables need the migration below. It copies no data.
   - PK and `ON CONFLICT` targets change.
   - Every lookup on a dependent table needs a root-key bound, or it loses pruning.
   - Do not use a default partition on the dependent tables.
-- pg_partman does not create partition-level FKs. It creates a new child with
-  `LIKE … INCLUDING CONSTRAINTS`, which copies no FKs, and then attaches it. Something must
-  add each new leaf's FKs in the same transaction as the attach. This hook was not tested.
-  Prove it before you rely on it.
+- Long-lived roots: a root row that keeps getting children for months breaks under
+  retention. After retention detaches its period, the next child write fails with
+  `no partition of relation … found for row`. A co-partitioned design needs a tested life
+  cycle for such roots (for example, a new root per period). Do not ban them.
+- pg_partman creates no leaf FKs for a new period. It creates a new child with
+  `LIKE … INCLUDING CONSTRAINTS`, which copies no FKs, and then attaches it. Two routes
+  were tested locally (PG 17.7, pg_partman 5.2.4); not yet proven on a managed cloud
+  database:
+  - An event trigger that adds the leaf FKs when pg_partman creates a period. It works,
+    but it needs superuser.
+  - A scheduled job. Turn the automatic maintenance of the sets off. Per FK-linked group,
+    in one transaction, under an advisory lock: run pg_partman's own maintenance for each
+    set (root first, then the dependents), then add the FKs of every new leaf. It works as
+    a non-superuser owner and fails closed: a bad row or a missing counterpart period rolls
+    back that group only, and no leaf stays without its FKs. The scheduler registration was
+    not tested.
 - Set pg_partman `maintenance_order` from root to leaf, so the root period exists before
   its dependents.
+- Other projects describe the same approach: FKs only between equally partitioned tables
+  (Cybertec, GitLab co-partitioning, Adyen). pg_partman 5.2.4 has the code comment "TODO
+  Review this to see how to handle based on recent FK issues", and issue
+  pgpartman/pg_partman#584 is open.
 
-**Approach 2: do not detach.** Use it when the archive stays in the same database.
+**Migrate existing tables without a data copy.** Run one short transaction per FK-linked
+group (the root and its dependents):
+
+1. Lock the root parent first, then the dependent parents.
+2. Drop the parent-level FKs.
+3. Detach the leaves.
+4. Create the new parents, partitioned by the root key, with the root key in the PK.
+5. ATTACH the old leaves to the new parents. ATTACH scans a leaf to prove its bound, unless
+   a validated CHECK on the leaf matches the bound.
+6. Add the leaf FKs `NOT VALID`, and COMMIT.
+7. After COMMIT, `VALIDATE` each leaf FK online, one per transaction.
+
+- Add the bound CHECK before the switch, only on closed past periods. Per leaf, in one
+  transaction: lock the leaf `IN SHARE ROW EXCLUSIVE MODE`, count the rows outside the
+  bound, and add the CHECK `NOT VALID` only at 0 rows. Validate it online later. A leaf
+  with rows outside the bound gets no CHECK, and ATTACH scans it.
+- Do not add the CHECK to the current or a future period. A `NOT VALID` CHECK still checks
+  every new row, so it rejects valid late writes.
+- Local result at about 9 GB, under 200 tx/s of writes: a pause of 80-618 ms per group,
+  0 failed transactions, every leaf FK validated, and no ATTACH scan on a leaf with a
+  CHECK. Tested locally (PG 17.7, pg_partman 5.2.4); not yet proven on a managed cloud
+  database.
+
+**Release order for an app that writes these tables:**
+
+1. Release 1 removes every `ON CONFLICT` upsert on the old key. It uses a plain INSERT, and
+   a plain UPDATE that treats 0 rows as an error.
+2. Release 2 switches the key (the migration above).
+3. Release 3 can add `ON CONFLICT` back, on the new key.
+
+Reason: an upsert that still carries the old key value of a row that has moved finds no
+conflict, and inserts a duplicate. After the switch, `ON CONFLICT` on the new key works, and
+the old target fails with `42P10`. Tested locally (PG 17.7, pg_partman 5.2.4); not yet
+proven on a managed cloud database.
+
+**Cross-period rows.** A cross-period row is a child row whose own time is in a later
+period than its root. To move its time into the root's period is an option only with the
+data owner's explicit yes. It is never a default step.
+
+- Move only settled rows: rows that no code path still writes.
+- Plan the move online. Then, in one transaction, lock the planned rows `FOR UPDATE`,
+  check again that each row is settled, and move only those rows. Leave the others for a
+  later run.
+
+**Approach 2: do not detach.** Use it when the archive stays in the same database. Also use
+it as a legacy hold for a set that a parent-level FK references, until that set is
+co-partitioned.
 
 - With `retention_keep_table=true`, a detach frees no disk and deletes no data. It only
   hides the rows from queries through the parent table. If that is the only reason to
   detach, set `retention = NULL` on every FK-linked set. pg_partman then skips the detach
   step but still creates future partitions (`premake`, `infinite_time_partitions`).
-- A new table with an FK to a partitioned table starts with `retention` unset.
+- A new table that joins an existing set still on this legacy hold starts with `retention`
+  unset. A new FK-linked set uses Approach 1 from its first migration.
 - The change only updates rows in `partman.part_config`. It does not rewrite tables or
   change FKs. Do not call `run_maintenance()` in the same migration, because it runs
   maintenance on all sets.
@@ -122,10 +197,10 @@ and the FKs must stay.
 
 **Do not use these fixes:**
 
-- Dropping the FKs, or an event trigger that drops FKs from the detached tables. This loses
-  referential integrity.
-- A custom detach procedure or a cron job beside pg_partman. Let pg_partman own the
-  partition life cycle.
+- Dropping the FKs with no leaf FKs in their place, or an event trigger that drops FKs from
+  the detached tables. This loses referential integrity.
+- A custom detach procedure that drops FKs. The job of Approach 1 is allowed: it runs
+  pg_partman's own maintenance and only adds FKs.
 - `retention_keep_table=false` alone. It deletes the data, and with FKs between sets it
   still needs pg_partman 5.5 (`detach_before_drop`).
 
@@ -147,7 +222,8 @@ select partman.create_parent(
 - `partman.part_config.parent_table` stores the **unquoted** name `schema.table`, even for
   a schema name that needs quotes in SQL (`my-schema.table`). A `WHERE parent_table =
   '"my-schema".table'` matches 0 rows and reports no error. Check the affected row count.
-- Set `retention` only on sets that no other partitioned table references (see above).
+- Set no `retention` on a set that a parent-level FK references. There, `retention = NULL`
+  is a legacy hold until the set is co-partitioned (Approach 2).
 
 ## pg_partman behaviour
 

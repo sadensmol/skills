@@ -13,3 +13,7 @@ stopping: a question it cannot settle goes to `## Questions to clarify` with the
 plan assumes (`sadensmol-plan` → *Questions to clarify*). The main session shows the plan
 to the user and then asks those questions one at a time. In a task, the main writer and reviewer sessions also run on the
 planning model until the user approves the plan (task skill → *Stages*).
+
+This capability serves task-flow and standalone plans. Name the workflow in the brief.
+Autopilot uses its own `autopilot-planner` through its run engine, not this capability.
+Never infer the workflow from an issue key, a plan filename or permission flags.

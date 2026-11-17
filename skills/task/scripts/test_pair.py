@@ -454,25 +454,18 @@ class UserPromptHookTests(PairTestCase):
         return self.run_pair("user-prompt", "--base", str(base), "--role", role,
                              stdin=json.dumps({"prompt": prompt, "hook_event_name": "UserPromptSubmit"}))
 
-    def test_writer_prompt_goes_verbatim_to_the_opencode_reviewer_and_reminds_the_writer(self):
+    def test_writer_prompt_is_not_forwarded_to_the_reviewer_and_reminds_the_writer(self):
         stub = StubOpencode()
         self.addCleanup(stub.close)
         base = make_base(self.base_dir, writer="claude", port=stub.port)
         (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
         r = self.hook(base, "writer", "why not subscribe in the constructor? you think otherwise?")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(stub.prompts(), [{
-            "parts": [{"type": "text", "text": "The user said to the writer (the writer settles "
-                                               "it in a pair thread, do not answer it here and "
-                                               "never send an ack): why "
-                                               "not subscribe in the constructor? you think "
-                                               "otherwise?"}],
-            "agent": "review"}])
-        self.assertIn("PAIR MODE: pair.py forwarded this user message verbatim to the reviewer.",
-                      r.stdout)
+        self.assertEqual(stub.prompts(), [])
+        self.assertIn("PAIR MODE: pair.py does not forward user messages to the reviewer", r.stdout)
         self.assertIn("liaison", r.stdout)
         self.assertNotIn("{", r.stdout)
-        self.assertLess(len(r.stdout), 650)
+        self.assertLess(len(r.stdout), 700)
 
     def test_reminder_without_threads_keeps_the_view_rule_and_is_short(self):
         stub = StubOpencode()
@@ -544,13 +537,12 @@ class UserPromptHookTests(PairTestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("could NOT forward", r.stdout)
 
-    def test_unreachable_opencode_peer_keeps_the_message_queued(self):
+    def test_writer_prompt_queues_nothing_for_an_unreachable_reviewer(self):
         base = make_base(self.base_dir, writer="claude", port=free_port())
         r = self.hook(base, "writer", "hello")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("queued this user message for the reviewer", r.stdout)
-        self.assertIn("Do not send it again", r.stdout)
-        self.assertEqual(len(list((base / ".pair/inbox/reviewer").glob("*.md"))), 1)
+        self.assertIn("does not forward user messages to the reviewer", r.stdout)
+        self.assertEqual(len(list((base / ".pair/inbox/reviewer").glob("*.md"))), 0)
 
     def test_empty_prompt_does_nothing(self):
         base = make_base(self.base_dir, writer="claude")
@@ -624,6 +616,43 @@ class WaiterGuardTests(PairTestCase):
         base = make_base(self.base_dir, writer="claude")
         (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
         r = self.guard(base, "PostToolUse", tool_name="Bash")
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def transcript(self, *entries):
+        path = Path(self.base_dir) / "transcript.jsonl"
+        path.write_text("".join(json.dumps(e) + "\n" for e in entries))
+        return str(path)
+
+    def test_stop_that_asks_in_chat_is_blocked_once(self):
+        base = make_base(self.base_dir, writer="claude")
+        (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
+        path = self.transcript(
+            {"type": "user", "message": {"content": "fix the bug"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Fixed it. Shall I also rename the helper?"}]}})
+        r = self.guard(base, "Stop", transcript_path=path)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["decision"], "block")
+        self.assertIn("PAIR STOP CHECK", r.stdout)
+        r = self.guard(base, "Stop", transcript_path=path, stop_hook_active=True)
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def test_stop_after_an_ask_user_call_or_a_plain_report_passes(self):
+        base = make_base(self.base_dir, writer="claude")
+        (base / ".pair" / "waiter-writer.pid").write_text(f"{os.getpid()}\n")
+        asked = self.transcript(
+            {"type": "user", "message": {"content": "deploy?"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "AskUserQuestion", "input": {}}]}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "I am waiting for your answer."}]}})
+        r = self.guard(base, "Stop", transcript_path=asked)
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        plain = self.transcript(
+            {"type": "user", "message": {"content": "fix the bug"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Fixed in svc/a.go; tests pass."}]}})
+        r = self.guard(base, "Stop", transcript_path=plain)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
     def test_dead_waiter_hands_over_the_backlog_in_order_and_says_to_rearm(self):
@@ -1715,7 +1744,7 @@ class RealOpencodeTests(PairTestCase):
 
 
 FAKE_LAUNCHER = """#!/bin/sh
-# a project new-task.sh in --print-command mode: <branch> --print-command [--single]
+# a workspace new-task.sh in --print-command mode: <branch> --print-command [--single]
 echo "$@" >> "$FAKE_LAUNCHER_LOG"
 single=""
 [ "${3:-}" = "--single" ] && single="--single"
@@ -2667,6 +2696,14 @@ class HeldFyiTests(PairTestCase):
     def send(self, base, to, body):
         return self.run_pair("send", "--base", str(base), "--to", to, "--stdin", stdin=body)
 
+    def test_fyi_answered_is_refused_and_answered_alone_goes_out(self):
+        base = make_base(self.base_dir, writer="opencode")
+        r = self.send(base, "reviewer", "FYI: answered: user asked x -> y")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("answer the user in chat first", r.stderr)
+        r = self.send(base, "reviewer", "FYI: answered alone: user asked x -> y")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_fyis_wait_and_go_out_as_one_message_with_the_next_other_message(self):
         base = make_base(self.base_dir, writer="opencode")
         (base / ".pair" / "waiter-reviewer.pid").write_text(f"{os.getpid()}\n")
@@ -2697,7 +2734,7 @@ class HeldFyiTests(PairTestCase):
         self.assertEqual([p["parts"][0]["text"] for p in stub.prompts()],
                          ["Chat from writer: FYI: a\nChat from writer: FYI: b"])
 
-    def test_a_forwarded_user_message_and_idle_release_the_held_fyis(self):
+    def test_idle_releases_the_held_fyis_and_a_user_message_does_not(self):
         stub = StubOpencode()
         self.addCleanup(stub.close)
         base = make_base(self.base_dir, writer="claude", port=stub.port)
@@ -2705,13 +2742,13 @@ class HeldFyiTests(PairTestCase):
         r = self.run_pair("user-prompt", "--base", str(base), "--role", "writer",
                           stdin=json.dumps({"prompt": "go on"}))
         self.assertEqual(r.returncode, 0, r.stderr)
-        texts = [p["parts"][0]["text"] for p in stub.prompts()]
-        self.assertEqual(texts[0], "Chat from writer: FYI: before the user")
-        self.assertTrue(texts[1].startswith("The user said to the writer"))
+        self.assertEqual(stub.prompts(), [])
         self.send(base, "reviewer", "FYI: last one")
         r = self.run_pair("idle", "--base", str(base), "--role", "writer")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(stub.prompts()[-1]["parts"][0]["text"], "Chat from writer: FYI: last one")
+        text = stub.prompts()[-1]["parts"][0]["text"]
+        self.assertIn("FYI: before the user", text)
+        self.assertIn("FYI: last one", text)
 
     def test_flush_releases_the_held_fyis(self):
         stub = StubOpencode()

@@ -3,23 +3,31 @@ name: sadensmol-agterm
 description: >
   Drive agterm, a native macOS terminal, through its agtermctl CLI and local control socket. Use when
   running inside an agterm session and asked to control the terminal — sessions, workspaces, windows,
-  splits, overlays, HTML/URL pages in an overlay (interactive, with saved logins), HUDs and captions,
-  notifications, pickers and question dialogs, inline images, typing, restarting a pane, clipboard and
+  splits, overlays, HTML/URL pages in an overlay or as a page row (interactive, with saved logins), HUDs and
+  captions, notifications, the sidebar activity line, pane messages, pickers and question dialogs, images,
+  rendered markdown, source files and followed logs, session links, typing, restarting a pane, clipboard and
   scrollback, keymap/custom commands/theme/config, events and event hooks, reopening closed sessions,
-  remote attach, installed vs running version and upgrades — or to diagnose or report an agterm problem.
+  remote attach, agterm-server remote windows, installed vs running version and upgrades — or to diagnose or
+  report an agterm problem.
 when_to_use: >
   Trigger on: agterm, agtermctl, AGTERM_SESSION_ID, and, from inside a session, plain requests such as
-  split the pane, close the overlay, show a message over the session, show a question dialog, agtermctl ask,
-  show an image inline, show this HTML page or artifact, make an HTML page or explainer for this and show
+  split the pane, print a link that jumps to a session, close the overlay, show a message over the session, show a question dialog, agtermctl ask,
+  show an image inline, show this markdown file rendered, show this source file or log at a line, show me the
+  diff of a file or the changes as links, tail or follow this log file, search the log or text page in the
+  overlay, wrap long lines in the text or log page, show this HTML page or artifact, make an HTML page or explainer for this and show
   it, make a page that switches sessions or returns a choice, preview the report you generated, show this
   URL or the running dev server, keep me logged in to a page shown in an overlay, search the scrollback,
-  flag every session in a workspace, tint a session or workspace row a color, make a companion session,
+  flag every session in a workspace, tint a session or workspace row a color, show status or activity under a
+  session in the sidebar, make a companion session, make this session a companion,
   keep a related program next to a session, duplicate this session with its programs as a companion,
-  show a page as a companion of this session, fold a session's companions, ask the user to type a value,
+  show a page as a companion of this session, open a page as its own session row in the sidebar, fold a
+  session's companions, send a message to the other pane or another agent, read my messages, wait for a message, ask the user to type a value,
   hide the overlay for a moment, wait until that worker session finishes,
   run my custom command, tell me when the selected session changes, bring back the session I just closed,
   copy this to the clipboard, was agterm upgraded under the running app, upgrade agterm without losing sessions,
-  what's new in agterm, update the agterm skill, attach a session from another Mac, what recipes are there,
+  what's new in agterm, update the agterm skill, attach a session from another Mac, attach a remote session
+  with all its companions, open a remote window for my Linux server, run sessions on a Linux host with
+  agterm-server, install agterm-server on a Linux host, detach or reattach a remote session, what recipes are there,
   the keymap editor will not open.
 allowed-tools: Bash(agtermctl *)
 ---
@@ -66,7 +74,9 @@ variables; troubleshooting.md ("Claude Code background sessions have no status")
 is not on PATH, the user can install it, or you invoke it by absolute path.
 
 - When `AGTERM_SOCKET` is set, pass `--socket "$AGTERM_SOCKET"` on every call: `agtermctl` never reads it
-  automatically. Otherwise the socket path auto-resolves.
+  automatically. Otherwise the socket path auto-resolves. Never write
+  `${AGTERM_SOCKET:+--socket "$AGTERM_SOCKET"}`: zsh passes it as one word, and `agtermctl`
+  fails with `Unknown option '--socket <path>'`.
 - `--socket` and other options go **after** the subcommand: `agtermctl tree --json`, not
   `agtermctl --json tree`.
 - Add `--json` to any command to get the raw JSON response (machine-readable). Without it, ordinary
@@ -139,10 +149,10 @@ agtermctl session new --cwd ~/proj --name worker \
   --command "zsh -lc 'claude \"\$(cat ~/brief.md)\"'"   # GUI PATH: wrap a non-default binary
 ```
 
-In Fresh shells and Re-run commands modes, the session closes when this command exits unless `--wait` holds
-the final output. In Live sessions mode the command is a create-only zmx payload, which bypasses the 1,024-byte
-PTY input cap. A surviving daemon ignores the payload; a new daemon runs it, then starts the persistent shell.
-The shell stays open after it exits and `--wait` adds no hold prompt. After a clean quit, a missing daemon
+The session closes when this command exits unless `--wait` holds the final output. In Live sessions mode the
+command is a create-only zmx payload, which bypasses the 1,024-byte PTY input cap. A surviving daemon ignores
+the payload; a new daemon runs it. A command that ends within a moment of the pane's creation can lose its
+output and leave only `agterm: session is gone`. After a clean quit, a missing daemon
 replays the captured running command inside a new persistent shell, except in the fresh-shell cases
 listed under `## restore modes` in `reference.md`.
 
@@ -164,22 +174,35 @@ installable community workflows in `cookbook.md`.
 - **tree** (`## tree`) — `tree [--json]`: per-session panes, `foreground` argv, status, split / overlay /
   HUD / ask state, `surfaces`; top-level window state (`idleMs`, `sidebar*`, `quickVisible`,
   `zoomedSurface`, `dashboard*`, `pickPending`, `askPending`, `app`, `flaggedOrder`, `attention*`); per-node
-  `parent`/`collapsed`/`content` (companions), `tint`/`tintOn`, `lastSelectedAt`.
+  `parent`/`collapsed`/`content` (companions), `tint`/`tintOn`, `info`, `lastSelectedAt`, `scratchCwd`,
+  `remoteSessionID`, `liveHostStale`, `sidebarDensity`, `pendingMessages` on a surface.
 - **events** (`## events`) — `events [--json] [--kind …] [--run RUN --after SEQ] [--limit N]`: status,
   notify, `session.created`/`closed`/`selected`, `tree.changed`, `pane.split`/`pane.scratch`/`pane.focused`,
-  `remote.opened`/`closed`, `app.launched`. No terminal-output stream.
+  `remote.opened`/`closed`, `app.launched`, `message` (mail queued for a pane; never the body). No
+  terminal-output stream.
 - **workspace** (`## workspace`) — `new [--collapsed] [--tint C]`, `rename`, `delete`, `select`, `go`, `move`,
   `focus`, `filter`, `flag` (every session of the workspace), `tint` (its own row only), `collapse`, `expand`.
 - **session** (`## session`) — `new` (`--command`, `--wait`, `--name`, `--after`/`--before`,
   `--no-select`, `--tint`/`--tint-on`, `--parent SID` for a companion), `duplicate` (`--companion` copies each
-  pane's program), `collapse`/`expand` (fold a parent's companions), `close` (`--undoable`: ⌘W's undo grace), `select`, `rename`, `reveal`, `go`, `move`, `type`, `copy`,
-  `paste`, `select-all`, `text`, `search`, `split`, `swap`, `scratch`, `focus`, `resize`, `status`,
-  `wait --until STATUS` (block until the agent status matches), `flag` (`move --before|--after` reorders), `tint`, `context`, `seen`, `restore`, `restart --pane-id ID [--command LINE]` (start a pane's program
+  pane's program), `convert --companion` (make a running top-level session a companion of a fresh shell in its
+  place), `collapse`/`expand` (fold a parent's companions), `close` (`--undoable`: ⌘W's undo grace), `select`, `rename`, `reveal`, `go`, `move`, `type`, `copy`,
+  `paste`, `select-all`, `text`, `search`, `split`, `swap`, `scratch`, `focus`, `resize`, `status` (`--if-idle`
+  sets it only on an idle row), `info` (one activity line under the sidebar row; `--markdown`, `--hide-after`),
+  `go --to N` (1-based sidebar place),
+  `wait --until STATUS` (block until the agent status matches), `flag` (`move --before|--after` reorders), `tint`
+  (also teal, pink, brown, indigo, mint or `#rrggbb`), `context`, `seen`, `restore`, `restart --pane-id ID [--command LINE]` (start a pane's program
   over in place), `lead`, `background` (`--pane` per-pane override), `overlay` (`open` a program,
-  `--html FILE` or `--url URL`, `--companion` for a page companion row, `--width`/`--height` in points; `resize`/`reload`/`navigate`/`submit`/`close`/`result`/`copy`/`text`/`hide`/`show`/`toggle`),
+  `--html FILE` or `--url URL`, `--companion` for a page companion row or `--page` for a top-level page row
+  (both only with `--html`/`--url`; page rows survive a relaunch), `--image FILE`, `--markdown FILE`,
+  `--text FILE [--line N]`, `--follow-file`/`--tail N` for a log, `--width`/`--height` in points;
+  `resize`/`reload`/`navigate`/`submit`/`close`/`result`/`copy`/`text`/`hide`/`show`/`toggle`, and on a text or log
+  page `follow`/`search`/`wrap`/`changes`),
   `hud` (`open`/`update`/`close`, `--hide-after SECONDS`, `--sticky`/`--no-frame` for an edge caption).
 - **window** (`## window`) — `new`, `list`, `select`, `go`, `close`, `rename`, `delete`, `resize`,
-  `move`, `zoom`, `fullscreen`, `minimize`.
+  `move`, `zoom`, `fullscreen`, `minimize`, `remote open HOST` (a window mirroring a Linux host's agterm-server).
+- **remote server** (`## remote server`) — what `agtermctl` on an agterm-server host serves and refuses;
+  `session detach`/`reattach`, `workspace detach`.
+- **server** (`## server`) — `server install HOST`: install or upgrade agterm-server on a Linux host over ssh.
 - **surface** (`## surface`) — `surface zoom`, `surface cursor`.
 - **dashboard** (`## dashboard`) — `dashboard <ids…>` / `--mru` / `--close`, `--font-size N` /
   `--auto-size`.
@@ -188,9 +211,12 @@ installable community workflows in `cookbook.md`.
 - **ask** (`## ask`) — `ask TITLE --button ID=LABEL …`, `--input line|multiline`, `--choice ID=LABEL`, `--style terminal|gui`, `--no-block`,
   `ask result`/`cancel`.
 - **quick** (`## quick`) — `quick show|hide|toggle`, `quick type`, `quick text`.
-- **sidebar** (`## sidebar`) — show/hide/toggle, `mode`, `flagged-layout`, `expand`, `collapse`, `width`.
+- **sidebar** (`## sidebar`) — show/hide/toggle, `mode`, `flagged-layout`, `density default|compact|toggle`,
+  `expand`, `collapse`, `width`.
 - **notify** (`## notify`) — `notify <body> [--title T]`. To signal that you need the user, prefer
   `session status` (`blocked`/`completed`); keep `notify` for a one-off nudge.
+- **msg** (`## msg`) — `msg send TEXT|--stdin --to SESSION:PANE` or `--all`, `msg read [--ack] [--wait]`,
+  `msg ack ID…`: per-pane mailboxes, in memory only, dropped when the pane closes or restarts.
 - **font** (`## font`) — `font inc|dec|reset [--pane left|right|scratch]`.
 - **keymap** (`## keymap`, `### keymap.conf format`) — `keymap reload`, `keymap list`, `keymap run NAME`
   (start a user custom command; the reply means it started, not that it succeeded).
@@ -205,12 +231,31 @@ installable community workflows in `cookbook.md`.
 - **theme** (`## theme`) — `theme list`, `theme set [name]`, `--dark <name>|none`.
 - **restore** (`## restore`) — `restore capture`, `restore clear`, `restore mode [none|rerun|live]`.
 - **zmx** (`## restore`) — `zmx list`, `screen NAME` (a closed window's pane as text), `prune`, `kill`,
-  `reset`, `tree [HOST]`, `attach HOST SESSION`.
+  `reset`, `tree [HOST]`, `attach HOST SESSION [--companions]`.
 - **terminfo** (`## terminfo`) — `terminfo install DESTINATION`: install `xterm-ghostty` terminfo on a
   remote host over ssh (fixes `less`/`vim` "terminal not fully functional"). Local-only, no socket.
 - **version** (`## version`) — `version` (`result.app` is the running app, `result.installed` the bundle
   on disk; they differ after an upgrade under the running app); pass `--socket "$AGTERM_SOCKET"` (or `"$AGT_SOCKET"` in a
   keymap child), since a bare call may answer for another app.
+
+## Pages without HTML
+
+For a file that needs no page of your own, open it natively, with `--target "$AGTERM_SESSION_ID"`:
+
+- `session overlay open --image FILE` — a png, jpg, gif or webp picture.
+- `session overlay open --markdown FILE [--navigation]` — a rendered markdown file.
+- `session overlay open --text FILE [--line N]` — a source, config or text file, read-only, at a line.
+- `session overlay open --text FILE --follow-file [--tail N]` — the end of a log, followed as it grows.
+
+None of them can be `--companion` or `--page`. The user opens the same views by ⌘-clicking an absolute path
+(`path:line` too), so printing the path is often enough. A diff for the user goes to one `.diff` file per changed
+file, each printed as a link. Before you use one, read `references/html-pages.md` → *Native pages*.
+
+## Session links
+
+`agterm://session/<id>` selects that session and raises its window on a ⌘-click. In Claude Code markdown write
+`[label](agterm://session/<id>)`; in a shell print OSC 8 (`printf '\e]8;;agterm://session/%s\e\\%s\e]8;;\e\\\n' "$id" label`).
+A link in a HUD, quick terminal or program overlay does nothing.
 
 ## Troubleshooting and reporting
 
@@ -224,8 +269,9 @@ notifications missing) or wants to report one, read **troubleshooting.md** first
 you write, review or answer. The summary in this skill is not the full rule.
 
 - **references/html-pages.md** — read before you open an HTML page or URL in an overlay (an explainer,
-  report, chart, diagram, a PDF, dev server), or build an interactive page that runs commands or returns a choice.
-- **references/bundled-scripts.md** — read before you show an image inline (`scripts/show-image.sh`) or
+  report, chart, diagram, a PDF, dev server), build an interactive page that runs commands or returns a choice,
+  or open an image, markdown file, source file or log natively (*Native pages*).
+- **references/bundled-scripts.md** — read before you fall back to `scripts/show-image.sh` (when `--image` is refused) or
   wrap a long command so the session row shows its status (`scripts/agst.sh`).
 - **references/inherited-env.md** — read before you start a daemon or session manager from inside a
   session, or when you run from the quick terminal.

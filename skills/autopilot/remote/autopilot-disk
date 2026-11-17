@@ -1,0 +1,79 @@
+#!/bin/bash
+# autopilot-disk open [SIZE] | close | status — the encrypted disk of the box (root, through sudo).
+# open creates the disk on first use (SIZE, default 100G, sparse) and asks the passphrase at the terminal.
+# The passphrase is read by cryptsetup from the terminal only: never an argument, a file or an env var.
+set -euo pipefail
+
+STATE=/var/lib/autopilot-remote
+IMG="$STATE/disk.img"
+NAME=autopilot-secure
+MNT=/secure
+OWNER="${SUDO_USER:-agent}"
+export DM_DISABLE_UDEV=1
+
+# the cleanup of a failed open reads these at script exit, so they are globals, not function locals
+created=0 loop="" opened=0
+
+cleanup() {
+  if [ "$opened" = 0 ]; then
+    if [ -e "/dev/mapper/$NAME" ]; then cryptsetup close "$NAME" || true; fi
+    if [ -n "$loop" ]; then losetup -d "$loop" 2>/dev/null || true; fi
+    if [ "$created" = 1 ]; then rm -f "$IMG"; fi
+  fi
+}
+
+is_open() { mountpoint -q "$MNT"; }
+
+open_disk() {
+  if is_open; then echo "the disk is already open"; return 0; fi
+  [ -t 0 ] || { echo "autopilot-disk: open needs a terminal for the passphrase" >&2; exit 2; }
+  local size="${1:-100G}"
+  if [ ! -f "$IMG" ]; then
+    [[ "$size" =~ ^[0-9]+[MGT]$ ]] || { echo "autopilot-disk: size must look like 100G" >&2; exit 2; }
+    [ -d "$STATE" ] || install -d -m 0755 "$STATE"
+    truncate -s "$size" "$IMG"
+    chmod 0600 "$IMG"
+    created=1
+  fi
+  # a mapping or loop left by a box that stopped with the disk open lives on in the host kernel: close it,
+  # so the disk never opens without the passphrase
+  if [ -e "/dev/mapper/$NAME" ] || dmsetup info "$NAME" >/dev/null 2>&1; then cryptsetup close "$NAME"; fi
+  for stale in $(losetup -j "$IMG" | cut -d: -f1); do losetup -d "$stale"; done
+  loop="$(losetup -f --show "$IMG")"
+  trap cleanup EXIT
+  if [ "$created" = 1 ]; then
+    echo "Choose the passphrase of the new disk. It is asked twice and stored nowhere: losing it loses the disk."
+    cryptsetup luksFormat --type luks2 --batch-mode --verify-passphrase "$loop"
+  fi
+  cryptsetup open "$loop" "$NAME"
+  if [ "$created" = 1 ]; then mkfs.ext4 -q -L autopilot "/dev/mapper/$NAME"; fi
+  install -d -m 0755 "$MNT"
+  mount "/dev/mapper/$NAME" "$MNT"
+  opened=1
+  trap - EXIT
+  install -d -m 0700 -o "$OWNER" -g "$OWNER" "$MNT/home"
+  for d in .claude .config .config/gh workspaces; do
+    install -d -m 0700 -o "$OWNER" -g "$OWNER" "$MNT/home/$d"
+  done
+  install -d -m 0710 "$MNT/docker"
+  systemctl start containerd docker
+  echo "the disk is open"
+}
+
+close_disk() {
+  systemctl stop docker.socket docker containerd 2>/dev/null || true
+  if is_open; then
+    fuser -km "$MNT" 2>/dev/null || true
+    umount "$MNT"
+  fi
+  if [ -e "/dev/mapper/$NAME" ] || dmsetup info "$NAME" >/dev/null 2>&1; then cryptsetup close "$NAME"; fi
+  for loop in $(losetup -j "$IMG" | cut -d: -f1); do losetup -d "$loop"; done
+  echo "the disk is closed"
+}
+
+case "${1:-}" in
+  open) open_disk "${2:-}" ;;
+  close) close_disk ;;
+  status) if is_open; then echo open; else echo closed; fi ;;
+  *) echo "usage: autopilot-disk open [SIZE] | close | status" >&2; exit 2 ;;
+esac

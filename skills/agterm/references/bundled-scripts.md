@@ -1,8 +1,11 @@
 # Bundled scripts
 
-Read this when you show an image inline, or wrap a long-running command so the session row shows its status (`agst`). File names below are relative to the skill root.
+Read this when `session overlay open --image` is refused and you fall back to the image script, or wrap a long-running command so the session row shows its status (`agst`). File names below are relative to the skill root.
 
 ## Displaying an image inline
+
+Use `session overlay open --image FILE` first (`references/html-pages.md` → *Native pages*). This script is the
+fallback for an agterm that refuses `--image`.
 
 This skill bundles `scripts/show-image.sh`. It opens an overlay (a real terminal) and renders the
 image there via the kitty graphics protocol, which ghostty draws natively — no kitty binary and no

@@ -24,7 +24,7 @@ Without `--pair`, `task new` works exactly as it does today.
 | User talks to the reviewer | The reviewer discusses the request in its own pane. When the request needs a code change, the reviewer sends it to the writer, labelled as a user request. The reviewer never edits files. |
 | User talks to the writer | This is the normal task flow. The writer sends the reviewer a short message about it. |
 | Activation | The opt-in flag `--pair` on `task new`. |
-| Scope | The channel and the protocol are generic and live in `sadensmol-task`. Each `<project>-task` `new-task.sh` only adds the launch of the split. |
+| Scope | The channel and the protocol are generic and live in `sadensmol-task`. Each `<workspace>-task` `new-task.sh` only adds the launch of the split. |
 | Terminal | agterm only. |
 | Transport | A file mailbox plus a per-agent wake-up. There is no screen reading and no typing into the other pane. |
 
@@ -106,7 +106,7 @@ Both agents read this reference at start. It contains:
   agreed" is never user approval.
 - **Plan-change and user-request rules**, from *Decisions*.
 
-### 2. Launch: `<project>-task/scripts/new-task.sh --pair`
+### 2. Launch: `<workspace>-task/scripts/new-task.sh --pair`
 
 1. Create `.pair/` and pick a free local port for the OpenCode side.
 2. Start the writer as today with `agtermctl session new … --command "<writer cmd>"`.

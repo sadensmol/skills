@@ -64,7 +64,8 @@ Always send with `pair.py`:
   deferred) on `python3 <pair.py> wait --follow --base <base> --role <your role>`, with
   `timeout_ms` 1800000 and the description `pair messages`. Each batch of messages is one
   event, and the waiter keeps listening: do NOT restart it after a batch. Start it again
-  only when the monitor expires or stops, unless you are idle (*Idle* below). Keep exactly one waiter running. Never poll or
+  only when the monitor expires or stops, unless you are idle (*Idle* below). An expiry
+  with no events gets no chat text: start the waiter again and end the turn. Keep exactly one waiter running. Never poll or
   sleep in the foreground for a reply. To wait for a reply, end your turn: the next event
   wakes you. Without a Monitor tool, run `wait` without `--follow` with the Bash tool and
   `run_in_background`, and start it again before you handle each batch.
@@ -92,7 +93,8 @@ Always send with `pair.py`:
 
 You are idle when the task is finished or the user's last request is fully answered, no
 liaison thread is open, no branch you started still runs, and you wait for no reply
-from the peer. Then run `python3 <pair.py> idle --base <base> --role <your role>`: it
+from the peer. Waiting only on the user (a gate, an `ask-user` question, a PR approval)
+is idle too. Then run `python3 <pair.py> idle --base <base> --role <your role>`: it
 stops your waiter and the pair hooks stop asking you to re-arm it. A Monitor that ends
 while you are idle is NOT started again. End the turn and say nothing more; there are
 no timers and no checks.
@@ -137,8 +139,8 @@ For every hard decision, in this order:
    `DECISION: <topic>` with the problem only: what must be decided, the constraints,
    the files involved. No solution, no preference, no hint of your view. With an
    OpenCode reviewer, steps 2–6 run in a liaison subagent instead (see *Liaison*).
-2. **Reviewer: its own view, blind.** Research the code and the rules: the project skill
-   and its `CLAUDE.md` conventions (layering, package layout, test policy), and existing
+2. **Reviewer: its own view, blind.** Research the code and the rules: the workspace skill
+   and the `CLAUDE.md` conventions (layering, package layout, test policy), and existing
    code that already does the job. Write your view file, then send `VIEW: <path>`. Never
    read the writer's view file before you send yours. A `QUESTION:` about the problem
    is allowed first; a question that asks for the writer's opinion is not.
@@ -204,9 +206,9 @@ content, the code, the review findings) still go through the loop.
 
 With an OpenCode reviewer, a Claude Code writer never runs the message exchange of a
 decision itself. A **liaison** subagent runs it in a pair **thread**: a reviewer subagent
-(a child session of the pair reviewer) discusses that one decision, so several decisions
-run in parallel. The writer's context gets only the result. The main reviewer session
-still gets user messages, `FYI:`, `STOP:` and the code review. With a Claude Code
+(a child session of the pair reviewer) discusses that one decision. One liaison per
+session runs the decisions one after another. The writer's context gets only the result.
+The main reviewer session still gets `FYI:`, `STOP:` and the code review. With a Claude Code
 reviewer, use `send` and the decision loop.
 
 **Writer, for each hard decision (see *Decision weight*), and each hard opinion
@@ -218,9 +220,8 @@ question or request of the user:**
    id, status, topic, files, decision); `python3 <pair.py> threads --base <base>`
    lists them at any time. The message names a thread (`t3`) or goes on with its
    topic, its files or its decision:
-   - the thread is `open`: its liaison still runs. Send that liaison (`pair: <topic>`,
-     see `ListAgents`) the message with `SendMessage`, as `user added: <verbatim>`,
-     and start no new liaison;
+   - the thread is `open`: the liaison still runs it. Send the liaison (`pair: liaison`,
+     see `ListAgents`) the message with `SendMessage`, as `user added: <verbatim>`;
    - the thread is `agreed`, `disputed` or `closed`: start a liaison (step 2) with
      `thread: resume <id>`;
    - about none of them: `thread: new`.
@@ -229,7 +230,7 @@ question or request of the user:**
    (what the user decided, earlier decisions). For a user question, the view is
    `user asked: <verbatim>. My answer: <answer>`.
 2. Start the liaison in the background: in PLAN a `planner-subagent`, in IMPL a
-   `main-subagent` (`SKILL.md` → *Stages*), with `description: "pair: <topic>"` and this
+   `main-subagent` (`SKILL.md` → *Stages*), with `description: "pair: liaison"` and this
    prompt:
 
        You are the pair liaison. Read <dir of pair.md>/pair-liaison.md and follow it.
@@ -241,11 +242,15 @@ question or request of the user:**
        thread: new | resume <id>
        problem: <the DECISION: what must be decided, the constraints, no solution>
 
-   For a user question or request, `problem:` holds the user's words verbatim.
-   `files:` lists what the decision will change; a new directory ends with `/`. For a
-   question that changes no file, pass your view file (`.pair/files/view-…`), so the
-   thread blocks no code.
-3. Go on with other work: other liaisons, read-only work, and typing agreed decisions.
+   For a user request, `problem:` holds the user's words verbatim.
+   `files:` lists what the decision will change; a new directory ends with `/`. A
+   question that changes no file never gets a liaison (*User requests*).
+
+   **One liaison per session.** Start it for the first decision. Send each next decision
+   to that same liaison (`pair: liaison`, see `ListAgents`) with `SendMessage`, holding
+   the same fields; it runs them one after another. Start a new liaison only when it is
+   gone.
+3. Go on with other work: read-only work and typing agreed decisions.
    Do NOT edit a file of a decision that is not agreed: the writer's `edit-guard` hook
    refuses an edit (yours or a subagent's) to a file of an `open` thread. For a user
    question, give the user your view-file answer now, headed `Writer's answer (reviewer
@@ -296,17 +301,21 @@ finish*, *Code review*) stay on `send` and the waiter. A fix that needs a decisi
 through a liaison.
 
 **Main reviewer.** A thread is not yours: never read `.pair/threads/` and never run
-`thread send`. Its subagent answers it. A message `The user said to the writer (the
-writer settles it in a pair thread, do not answer it here): …` is for your context
-only: do not send a `VIEW:` for it.
+`thread send`. Its subagent answers it.
 
 ## User requests — clear alone, hard through the pair (MUST FOLLOW)
 
-- **Every user message reaches both agents.** A Claude Code agent in pair mode starts
-  with `--settings <base>/.pair/claude-<role>-settings.json`. Its `UserPromptSubmit`
-  hook (`pair.py user-prompt`) forwards each message the user types in that pane to
-  the peer, verbatim, as `The user said to the <role>: …`. The hook also puts the rules
-  below into the agent's context.
+- **User messages reach the reviewer only through the pair.** A Claude Code agent in pair
+  mode starts with `--settings <base>/.pair/claude-<role>-settings.json`. Its
+  `UserPromptSubmit` hook (`pair.py user-prompt`) puts the rules below into the agent's
+  context. It forwards a message typed in the reviewer's pane to the writer, verbatim, as
+  `The user said to the reviewer: …`. It never forwards the writer's messages to the
+  reviewer: a relay of each one cost the reviewer a turn and drew no action. A hard one
+  reaches the reviewer as a `DECISION:` or a liaison thread.
+- **A question that changes no file** — whatever its weight: answer it alone, at once, in
+  chat. No thread, no liaison, no `DECISION:`, nothing to the peer. Log it with
+  `result: answered alone` (`SKILL.md` → *Q&A log*). The pair runs only for decisions
+  that change code or `PLAN.md`.
 - **You get `The user said to the <peer> (…): …`**: it is context only. Send nothing for
   it: no `VIEW:`, no ack. The agent the user talked to decides whether it is hard. When
   it frames a `DECISION:`, answer that with your `VIEW:`. When the answer it gives or the
@@ -487,7 +496,7 @@ request alive; the full reply is still due within 10 minutes of the request.
 ## Code review
 
 The reviewer is ALWAYS in a code review (MUST FOLLOW). Every time the writer runs a
-code-review skill in pair mode (the project's code-review skill, `task review` or any
+code-review skill in pair mode (the workspace's code-review skill, `task review` or any
 other review skill), in the pre-PR preparation or on a direct user request — never at
 any other time — it stays the orchestrator. The review subagents never talk to the
 reviewer. Only the writer does, at the top level, each time a subagent reports. Every

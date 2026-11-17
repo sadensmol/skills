@@ -1,0 +1,25 @@
+# The autopilot remote box. setup streams this file to `docker compose -f -`, so nothing is written on
+# the host. Privileged: systemd as PID 1, the encrypted disk (loop + dm-crypt) and the box's own Docker.
+# The ssh port listens on the host's loopback only; the Mac reaches it through the host's sshd.
+name: autopilot-remote
+services:
+  box:
+    image: autopilot-remote:local
+    container_name: autopilot-remote
+    hostname: autopilot-remote
+    privileged: true
+    cgroup: private
+    restart: unless-stopped
+    stop_signal: SIGRTMIN+3
+    stop_grace_period: 60s
+    tmpfs:
+      - /run
+      - /run/lock
+    ports:
+      - "127.0.0.1:${AUTOPILOT_REMOTE_PORT:-2222}:22"
+    volumes:
+      - home:/home/agent
+      - state:/var/lib/autopilot-remote
+volumes:
+  home:
+  state:

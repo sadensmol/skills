@@ -15,24 +15,30 @@ Lines marked **Convention** are our own choice, not Linear's.
 | Milestone | issues of one project | A stage of completion inside a project [conceptual-model] |
 | Parent issue | sub-issues | Too large for one issue, too small for a project; can convert to a project [parent-and-sub-issues] |
 
-- A project is finished work, not a product. Do not model a product as a project.
+- Linear's project is an outcome with an end. **Convention:** a workspace project is the
+  exception: an ongoing Linear project that stays started (see *Several projects* below).
 - Every issue belongs to exactly one team. A project can span many teams [teams].
 - One team is the simplest setup for small teams. Start with one or two; adding later is easy [teams].
 - Team limits: Free 2, Basic 5, Business/Enterprise unlimited [teams]. Check the plan before adding a team.
 - Sub-teams inherit workflow, cycles, labels and templates from the parent [conceptual-model, labels, issue-templates].
 
-## Several products in one workspace
+## Several projects in one workspace
 
-Linear does not say whether a product is a team or a project. **Convention:**
+Linear does not say whether a workspace project is a team or a Linear project. **Convention:**
 
-- **Product = team** when it has its own repo, branch↔issue mapping, or cadence. The team key
-  becomes the issue prefix (`APP-12`), so branches map per repo.
-- **Feature = project** inside that team, with milestones and a target date.
-- **Goal across products = initiative**.
-- **Product = Slack channel** (`#<team>`) in ONE Slack workspace that mirrors the Linear
-  workspace — see Slack below. Never a Slack workspace per product.
-- Keep a catch-all team for small one-off work.
-- On a plan with a team limit, use one team and a workspace label group `Product/<name>` instead.
+- **Project = Linear project** in ONE shared team. One team keeps the Free plan (2 teams) open
+  to any number of projects [teams].
+- All projects share the team's issue prefix (`ACME-12`). The key does not name the project:
+  the issue's Linear project does. Every issue belongs to a Linear project.
+- **Feature = milestone** inside the project's Linear project. A large feature can be a parent
+  issue instead. Never a Linear project or a team per feature.
+- **Goal across projects = initiative**.
+- **Project = Slack channel** (`#<project>`) in ONE Slack workspace that mirrors the Linear
+  workspace — see Slack below. Never a Slack workspace per project, never a channel per feature.
+- A team per project only on a plan without a team limit, and only when the project needs its
+  own workflow or cadence.
+- The workspace registry (`.workspace/settings.json`, `.workspace/projects/<project>.json`) names the shared team and each project's
+  Linear project, channel and repos.
 
 ## Teams
 
@@ -68,8 +74,9 @@ Linear does not say whether a product is a team or a project. **Convention:**
 
 Linear gives no naming rules for teams or projects. **Convention:**
 
-- Team: product name (`acme-app`), key from it (`ACME`).
-- Project: the outcome, not the activity — `Bulk export`, not `Work on export`.
+- Shared team: the workspace or area name (`acme`), key from it (`ACME`).
+- Workspace project: one name for the Linear project, its repo and its channel (`web`).
+- A Linear project for finished work: the outcome, not the activity — `Bulk export`, not `Work on export`.
 - Issue title: imperative, one outcome — `Add retry to failed uploads`.
 - Write issues an agent can execute: outcome, scope, constraints, what must not change [coding-sessions].
 
@@ -98,14 +105,16 @@ Linear gives no naming rules for teams or projects. **Convention:**
 
 - A Linear workspace has ONE Slack integration and ONE `@Linear` bot. There is no per-team bot.
   Connecting more than one Slack workspace needs Enterprise [slack].
-- **Convention:** one Slack workspace per Linear workspace, one channel per team. A Slack
-  workspace per product hits the one-integration limit as soon as a second product appears.
-- Get per-team behaviour from the single bot:
-  - Team notifications: team settings > Notifications > Slack → the team's channel. Posts issue
-    creation, comments, status changes and project updates [slack].
-  - Slack agent guidance (Settings > Integrations > Slack): map each channel to its team, e.g.
-    `#acme → team ACME`. The bot also infers the project from a channel that receives that
-    project's updates [slack].
+- **Convention:** one Slack workspace per Linear workspace, one channel per project. A Slack
+  workspace per project hits the one-integration limit as soon as a second project appears.
+- Get per-project behaviour from the single bot:
+  - Project notifications: the Linear project's bell (*Slack notifications*) → `#<project>`.
+    The shared team keeps no team channel: it would get every project's issues [slack].
+  - Settings > Integrations > Slack > *Project channels* stays off: the project channel exists
+    already, and features get none.
+  - Slack agent guidance (Settings > Integrations > Slack): map each channel to its team and
+    Linear project, e.g. `#web → team ACME, project web`. The bot also infers the project from
+    a channel that receives that project's updates [slack].
   - A fixed team per channel (Asks per-channel configuration) is Enterprise only [linear-asks-slack].
 - Setup order: an admin enables the workspace integration (Settings > Integrations > Slack), THEN
   every user connects their personal Slack account (Settings > Connected accounts > Slack).

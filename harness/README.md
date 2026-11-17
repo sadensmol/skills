@@ -25,7 +25,7 @@ the capability is absent.
 | `load-skill` | Bring another skill's instructions into context once, then reuse them while they remain present |
 | `ask-user` | Put a short choice or question to the user and wait |
 | `track-todos` | Keep a visible, live task list |
-| `browser` | Act in the user's authenticated browser through the workspace server the project policy names: reuse its tabs, never another browser |
+| `browser` | Act in the user's authenticated browser through the workspace server the workspace policy names: reuse its tabs, never another browser |
 | `run-background-shell` | Start a long-running command, keep working, collect it later |
 | `spawn-subagent` | Delegate one unit of work to a fresh context |
 | `cheap-subagent` | `spawn-subagent` on the harness's cheapest model that can still run commands and read their output |

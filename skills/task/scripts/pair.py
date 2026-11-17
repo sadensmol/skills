@@ -94,7 +94,7 @@ REVIEWS_HEADING = "## Reviews"
 # new conversation loads only what its action needs.
 FRESH_MARK = "your context was cleared on purpose"
 FRESH_PROMPT_RE = re.compile(r"[A-Za-z ]+: " + FRESH_MARK)
-TASK_SKILL_ONLY = ("Load only the task skill (the sadensmol-task dispatcher and the project "
+TASK_SKILL_ONLY = ("Load only the task skill (the sadensmol-task dispatcher and the workspace "
                    "task skill)")
 FRESH_PROMPTS = {
     "plan": (f"Plan discussion: {FRESH_MARK} and PLAN.md at the worktree base is the whole "
@@ -108,7 +108,7 @@ FRESH_PROMPTS = {
     "finish": (f"Finish: {FRESH_MARK} for task finish. "
                f"{TASK_SKILL_ONLY}, read PLAN.md, {{decisions}}, {USER_DECISIONS_READ} and the "
                "git diff of each repo at the worktree base, then run the task finish of the "
-               "project from its start, without its Start in a clean context step "
+               "workspace from its start, without its Start in a clean context step "
                "(references/finish.md). Its review gate still applies. Load any other skill "
                "only when a step of finish needs it."),
     "reviews": (f"Plan review: {FRESH_MARK} for task reviews, and the task is on PLAN again "
@@ -379,6 +379,11 @@ def cmd_send(args: argparse.Namespace) -> int:
         raise PairError("with an OpenCode reviewer a decision runs in a liaison thread, never "
                         "on the main channel (pair.md, Liaison). A liaison that returned "
                         "blocked or unresponsive: follow Peer not reachable.", code=7)
+    if body.startswith("FYI: answered") and not body.startswith("FYI: answered alone:"):
+        # the user saw only a status line while the answer went to the peer
+        raise PairError("answer the user in chat first. A clear question gets its answer in "
+                        "chat and sends the peer nothing (pair.md, User requests). Only "
+                        "'FYI: answered alone:' after the 2-minute merge timeout goes to the peer.")
     label = USER_REQUEST_LABEL if args.user_request else LABELS[sender]
     if body.startswith("FYI:") and not args.user_request:
         held = put_message(held_box(base, to), sender, f"{label} {body}")
@@ -483,9 +488,10 @@ def user_said(base: Path, cfg: dict, role: str, prompt: str) -> str:
 
 ROUTE_RULE = (
     "ROUTE this message: when it names one of these threads or goes on with its topic, it "
-    "belongs to that thread. Open: its liaison still runs, so SendMessage it the follow-up, "
-    "as user added: <the message verbatim>. Agreed, disputed or closed: start a liaison with "
-    "thread: resume <id>. About none of them: thread: new.")
+    "belongs to that thread. Open: SendMessage the follow-up to the session liaison, as user "
+    "added: <the message verbatim>. Agreed, disputed or closed: send the liaison thread: "
+    "resume <id>. About none of them: thread: new. A question that changes no file: answer "
+    "it alone, no thread.")
 
 
 def thread_routes(base: Path, cfg: dict) -> str:
@@ -584,6 +590,13 @@ def cmd_user_prompt(args: argparse.Namespace) -> int:
             # the first prompt of a `fresh` restart comes from the launcher, not the user
             print(stage_line)
             return 0
+        if peer == "reviewer":
+            # a relay of every user message cost the reviewer a turn each and drew no
+            # action; a hard message reaches it as a DECISION: or a liaison thread
+            print(reminder.format(forwarded=NOT_FORWARDED, peer=peer))
+            print(stage_line)
+            print_threads_and_waiter(base, cfg, args.role, errors)
+            return 0
         release_held(base, peer)
         path = write_message(base, peer, "user", user_said(base, cfg, args.role, prompt))
     except errors as exc:
@@ -610,7 +623,17 @@ def cmd_user_prompt(args: argparse.Namespace) -> int:
                      f"the {peer} is not reachable.")
     print(reminder.format(forwarded=forwarded, peer=peer))
     print(stage_line)
-    if uses_threads(cfg, args.role):
+    print_threads_and_waiter(base, cfg, args.role, errors)
+    return 0
+
+
+NOT_FORWARDED = ("pair.py does not forward user messages to the reviewer: a hard one "
+                 "reaches it only through the pair.")
+
+
+def print_threads_and_waiter(base: Path, cfg: dict, role: str, errors: tuple) -> None:
+    """The thread routes and, when the waiter is down, its backlog and re-arm note."""
+    if uses_threads(cfg, role):
         try:
             routes = thread_routes(base, cfg)
         except errors:
@@ -618,13 +641,12 @@ def cmd_user_prompt(args: argparse.Namespace) -> int:
         if routes:
             print(routes)
     try:
-        idle_marker(base, args.role).unlink(missing_ok=True)  # a user message is new work
-        note = waiter_down_note(base, args.role) if cfg["roles"][args.role]["kind"] == "claude" else ""
+        idle_marker(base, role).unlink(missing_ok=True)  # a user message is new work
+        note = waiter_down_note(base, role) if cfg["roles"][role]["kind"] == "claude" else ""
     except errors:
         note = ""
     if note:
         print(note)
-    return 0
 
 
 def claude_settings(base: Path, role: str) -> dict:
@@ -695,6 +717,46 @@ def waiter_down_note(base: Path, role: str) -> str:
     return "\n".join(parts)
 
 
+STOP_ASKS = (
+    "PAIR STOP CHECK: your reply asks for permission or says it waits for the user, and this "
+    "turn made no ask-user call. Decide a non-critical point yourself, log it and go on "
+    "(SKILL.md, Autonomy). Ask a critical decision through ask-user. At the plan or pre-PR "
+    "diff gate, end the turn again.")
+ASKS_RE = re.compile(r"\b(shall i|should i|do you want me to|want me to|tell me if|"
+                     r"let me know if|waiting for (you|your))\b", re.IGNORECASE)
+ASK_USER_TOOLS = ("AskUserQuestion",)
+
+
+def asks_instead_of_deciding(payload: dict) -> bool:
+    """True when the turn's last reply asks the user in chat with no ask-user call."""
+    text, asked = payload.get("last_assistant_message"), False
+    try:
+        lines = Path(str(payload.get("transcript_path", ""))).read_text(
+            encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        lines = []
+    for raw in reversed(lines):
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        content = (entry.get("message") or {}).get("content")
+        if entry.get("type") == "user":
+            typed = content if isinstance(content, str) else " ".join(
+                b.get("text", "") for b in content or [] if b.get("type") == "text")
+            if typed and not typed.startswith("<task-notification>"):
+                break  # the turn starts at the user's message
+            continue
+        if entry.get("type") != "assistant" or not isinstance(content, list):
+            continue
+        for block in content:
+            if block.get("type") == "tool_use" and block.get("name") in ASK_USER_TOOLS:
+                asked = True
+            elif block.get("type") == "text" and text is None:
+                text = block.get("text", "")
+    return bool(text) and not asked and bool(ASKS_RE.search(str(text)[-600:]))
+
+
 def cmd_guard(args: argparse.Namespace) -> int:
     """PostToolUse and Stop hook of a Claude Code agent in pair mode.
 
@@ -723,6 +785,8 @@ def cmd_guard(args: argparse.Namespace) -> int:
         note = waiter_down_note(base, args.role)
     except errors:
         return 0
+    if not note and event == "Stop" and asks_instead_of_deciding(payload):
+        note = STOP_ASKS
     if not note:
         return 0
     if event == "Stop":
@@ -1334,7 +1398,7 @@ def restart(args: argparse.Namespace, rec: dict, stage: str, purpose: str | None
     """Restart the sessions of the task on the models of `stage` (SKILL.md, Stages).
 
     A running session cannot switch its model or clear its context, so the writer terminal
-    is respawned with the command the project launcher prints, and in pair mode `launch
+    is respawned with the command the workspace launcher prints, and in pair mode `launch
     --reopen` starts the reviewer in the new split. The old terminal closes with both
     panes, so the reviewer is never restarted on its own first. The restart runs detached:
     this command usually runs inside the session it replaces.
@@ -1351,7 +1415,7 @@ def restart(args: argparse.Namespace, rec: dict, stage: str, purpose: str | None
             "pair.py launch records it" if pair else "run it inside the task session"))
     if not rec.get("launcher"):
         raise PairError("no launcher recorded for this task (it was opened before stages): "
-                        "pass --launcher <the project new-task.sh> --branch <branch>")
+                        "pass --launcher <the workspace new-task.sh> --branch <branch>")
     refuse_live_companions(old)
     if purpose == "reviews":
         # the one way back from IMPL: the record of the other mode must not keep impl
@@ -1450,7 +1514,7 @@ def cmd_plan_open(args: argparse.Namespace) -> int:
 
 
 def launcher_command(rec: dict, single: bool, kind: str, pair: bool) -> str:
-    """The writer start command the project launcher prints for the recorded stage."""
+    """The writer start command the workspace launcher prints for the recorded stage."""
     launcher = rec["launcher"]
     argv = [launcher["script"], launcher["branch"], "--print-command"]
     if single:
@@ -2630,7 +2694,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--single", action="store_true",
                        help="the record of a single session (.task-stage), even beside a pair")
     for p in (stage, fresh, claude_args, opencode_args):
-        p.add_argument("--launcher", help="the project new-task.sh, recorded for stage")
+        p.add_argument("--launcher", help="the workspace new-task.sh, recorded for stage")
         p.add_argument("--branch", help="the task branch, with --launcher")
     return parser
 

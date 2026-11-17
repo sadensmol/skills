@@ -1,7 +1,7 @@
 # `status` / `list` / `switch` — handled by the dispatcher
 
-`list` and `switch` work on the worktrees under the project root `$root` (`references/worktree-helpers.md` →
-*Project root*) and run from anywhere. `status` reports on the task this session is in, and
+`list` and `switch` work on the worktrees under the workspace root `$root` (`references/worktree-helpers.md` →
+*Workspace root*) and run from anywhere. `status` reports on the task this session is in, and
 uses `$root` for `--all`.
 
 ## `status`
@@ -43,7 +43,7 @@ done
 
 A failing `@{upstream}` means never pushed — a finish blocker, not an error.
 
-**Ticket id.** Take the id the project's `new` wrote into the session context; fall back
+**Ticket id.** Take the id the workspace's `new` wrote into the session context; fall back
 to the branch's leading `<letters>-<digits>`:
 
 ```bash
@@ -61,9 +61,9 @@ ticket="$(printf '%s' "$ctx" | cut -f1)"
 [ -n "$ticket" ] || ticket="$(printf '%s' "$branch" | grep -oiE '^[a-z]+-[0-9]+' | tr '[:lower:]' '[:upper:]')"
 ```
 
-Report the id only. Tracker state belongs to the project skill — this file never learns
+Report the id only. Tracker state belongs to the workspace skill — this file never learns
 status names, never builds a tracker link and never hardcodes a tracker host. Take the
-URL from the tracker tool's issue response (`url`), or from the project skill's
+URL from the tracker tool's issue response (`url`), or from the workspace skill's
 issue-URL template. Link the id when you have a URL; never stall the report on a
 tracker call.
 
@@ -108,7 +108,7 @@ leftovers as blockers.
 - PR #N `CHANGES_REQUESTED`
 - PR #N `CONFLICTING` — needs a rebase
 - PR #N open and unmerged
-- ticket `<id>` still needs its tracker move — the project skill owns it; name the id
+- ticket `<id>` still needs its tracker move — the workspace skill owns it; name the id
   and the owner, never invent a status name
 
 An empty list means `finish` would go through. Deferred review findings that should
@@ -247,12 +247,12 @@ stash, refresh dependencies or inspect task status.
 4. Read `agtermctl tree --json` and locate the task session by its `cwd` under the selected
    worktree. Use path boundaries, not a bare name prefix; exclude test, console, and review
    companion sessions (every node with a `parent` field). Ask only if several task sessions match.
-5. No matching session, or `--pair` / `--single` given → run the project's script, which
+5. No matching session, or `--pair` / `--single` given → run the workspace's script, which
    opens or converts the session and leaves every repo as it is. It keeps the mode the
    worktree recorded:
 
    ```bash
-   bash <project-skill-dir>/scripts/new-task.sh <branch> --open [--pair | --single]
+   bash <workspace-skill-dir>/scripts/new-task.sh <branch> --open [--pair | --single]
    ```
 
    Then read `agtermctl tree --json` again for the session id.

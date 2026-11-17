@@ -6,7 +6,7 @@ description: "Language-agnostic programming principles that every language skill
 # Programming Principles
 
 The rules here hold in every language. A language skill adds syntax, tooling and idioms
-on top; a project skill adds its own conventions. **On conflict: project skill >
+on top; a workspace skill adds its own conventions. **On conflict: workspace skill >
 language skill > this skill.** Examples are in Go; the rule is the same in any language.
 
 ## Before Changing Code
@@ -173,7 +173,8 @@ rules live in `sadensmol-programming-api`.
 - **Reproduce a bug with the fewest entities**, with fakes as strict as the real dependency.
 - One behaviour per test, named by the behaviour; Arrange-Act-Assert.
 - Deterministic: inject clock, network, storage; poll instead of sleep, except to prove
-  something did NOT happen.
+  something did NOT happen. Poll for every value you then assert, not for a signal that
+  comes before it.
 - When a test fails, read the logs first. Never guess.
 
 ## Read on demand

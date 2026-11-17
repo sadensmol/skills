@@ -1,0 +1,22 @@
+{
+  "company": "acme",
+  "agterm_workspace": "acme",
+  "slack": {
+    "workspace": "acme"
+  },
+  "linear": {
+    "workspace": "acme",
+    "statuses": {
+      "todo": "Todo",
+      "planning": "Planning",
+      "implementing": "In Progress",
+      "qa": "In QA",
+      "review": "In Review",
+      "pr": "PR Open",
+      "blocked": "Blocked",
+      "done": "Done",
+      "canceled": "Canceled"
+    },
+    "default_label": "Feature"
+  }
+}

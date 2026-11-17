@@ -41,5 +41,5 @@ sits on, because a lying comment is worse than no comment.
 
 A comment survives only when it carries what the code cannot: the **why** — a non-obvious
 constraint, a workaround with its reason or link, a spec rule the reader would otherwise
-break. Where a project mandates doc comments on an exported API, that project's skill
+break. Where a workspace mandates doc comments on an exported API, that workspace's skill
 wins; otherwise the loaded language skill is the authority on the exact rule.

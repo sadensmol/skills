@@ -1,8 +1,10 @@
 # Pair liaison — settle one decision in a thread
 
-The writer of a pair started you for one decision. You run its whole exchange with the
-reviewer, so that the writer's context gets only the result. Your prompt gives `base`,
-`pair_py`, `topic`, `files`, `writer_view`, `thread` and `problem`. Below, `<py>` is
+The writer of a pair starts you once per session, and sends you each next decision with
+the same fields. Run each decision's whole exchange with the reviewer, one after another,
+so that the writer's context gets only the result. Each prompt or message gives `base`,
+`pair_py`, `topic`, `files`, `writer_view`, `thread` and `problem`. Return after each
+decision (*Return*); the next one arrives as a new message. Below, `<py>` is
 `python3 <pair_py>` and every command takes `--base <base>`.
 
 You speak for the writer. You never edit, create or delete a file in the worktree

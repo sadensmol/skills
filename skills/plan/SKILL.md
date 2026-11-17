@@ -10,11 +10,20 @@ comments on any item, and the planner reworks it. This skill owns the **content 
 structure** of that file. The task flow (`sadensmol-task` → `references/plan.md`) owns
 **when** the plan is written, gated and approved.
 
+## Workflow scope
+
+Use the document structure in the workflow that called this skill. It does not select
+or change that workflow. Task-flow plans use the task planner and user approval gates.
+Autopilot plans use `autopilot-planner`, its mission and the run engine. In Autopilot,
+the run protocol owns questions, logs and review; never load the task flow, run `pair.py`
+or open its approval gates. Shared plan formatting does not require task-flow tools.
+
 ## Where the plan lives
 
 | Situation | File |
 |---|---|
 | Inside a task | `<worktree-base>/PLAN.md` — at the base, never inside a repo, never committed |
+| Inside an Autopilot run | `<run-base>/PLAN.md` — outside the repos; the run engine owns its lifecycle |
 | Outside a task | `.scratch/plans/<YYYY-MM-DD>-<slug>.md` at the session base (`sadensmol-router` → scratch dir), or the path the user names |
 
 The plan is always `.md`. Never write the plan as HTML, and never show it as an HTML page
@@ -258,10 +267,12 @@ Run it in the background (`sadensmol-task` → `references/plannotator.md`).
 
 ## Who writes the plan
 
-The plan is written and reworked by the `planner-subagent` (`sadensmol-router` →
+For the task flow and standalone plans, the plan is written and reworked by the `planner-subagent` (`sadensmol-router` →
 `references/planning.md`). Its brief names this skill, the plan path, the sources, the
 user's decisions verbatim and the comments to apply. The main session never edits the
 plan, except the log appends of `pair.py`.
+
+Autopilot uses its own `autopilot-planner` through the run engine instead.
 
 ## Common mistakes
 
@@ -271,7 +282,7 @@ plan, except the log appends of `pair.py`.
 | An explanation full of function names, paths and jargon | Plain words; technical detail only in the `Source` / `Where` cells and `where:` / `check:` lines |
 | "The bug is X" with no evidence | Mark the problem `PROVED`, `NOT REPRODUCED` or `NOT A PROBLEM`, with the evidence |
 | A plan step without a file or a check | Every `S<n>` names `where` and `check` |
-| Story tickets without assignee or estimate | Take both from the project tracker skill's rules; unknown → ask |
+| Story tickets without assignee or estimate | Take both from the workspace tracker skill's rules; unknown → ask |
 | A user question turned into a plan step | It is a `## Q&A` entry until the user asks for the change |
 | Planning stopped to ask the user | Finish the plan; the gap is a `## Questions to clarify` entry with `assumed:` |
 | A question with no `assumed:` answer, or plan items that hide the assumption | Write the plan on one answer and tag each item `(assumes Q<n>)` |

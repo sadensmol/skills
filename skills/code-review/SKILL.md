@@ -1,11 +1,11 @@
 ---
 name: sadensmol-code-review
-description: "Review code changes for defects, missing docs, over-engineering, and weak tests. Use when: (1) user asks to review code, (2) user asks to review the current branch, (3) user asks for a code review before a PR or a commit, (4) user says 'review my code' or 'check my changes', (5) user gives a PR link or number and asks what is wrong with it, (6) `task finish` runs it as its gate. Never start it on your own."
+description: "Review code changes for defects, missing docs, over-engineering, and weak tests. Use when: (1) user asks to review code, (2) user asks to review the current branch, (3) user asks for a code review before a PR or a commit, (4) user says 'review my code' or 'check my changes', (5) user gives a PR link or number and asks what is wrong with it, (6) `task finish` runs it as its gate, (7) an autopilot run's review phase starts it. Never start it on your own."
 ---
 
 # Review Code
 
-**Start only on an explicit user request or inside `task finish` (MUST FOLLOW)**, also
+**Start only on an explicit user request, inside `task finish`, or in an autopilot run's review phase (MUST FOLLOW)**, also
 when the task flow starts `finish` itself (`sadensmol-task` → *Autonomy*). Finished code, green tests or a skill's checkpoint never start it.
 
 Six review areas examine one change, each on a single concern. They are fanned out, one
@@ -45,7 +45,7 @@ Read the one for the harness you are in, which the injected runtime file names. 
 else on this page — what each reviewer looks for, what counts as P0, how the report is
 rendered — is the same everywhere.
 
-## How the reviewers load project skills
+## How the reviewers load skills
 
 **You** work out the skill list once, and the script passes it to every reviewer. This
 replaces each agent re-deriving it on its own.
@@ -64,14 +64,14 @@ replaces each agent re-deriving it on its own.
    **A diff touching even one `.go` file MUST carry `sadensmol-programming-go`** and
    `sadensmol-programming` — their rules (no comment by default, so "add a doc comment" is usually the *wrong* finding;
    naming; error handling; mappers) decide whether a finding is valid at all.
-2. **Add the routing pass** — `sadensmol-router`, plus any project router whose cwd
-   matches (`<project>-router`), for project-specific conventions.
+2. **Add the routing pass** — `sadensmol-router`, plus any workspace router whose cwd
+   matches (`<workspace>-router`), for workspace-specific conventions.
 3. **Add concern-specific skills** — the testing reviewer also needs the stack's testing
    reference (for Go, `sadensmol-programming-go` → `references/integration-tests.md`); the script appends it for that
    reviewer only.
 
 Run the same routing pass in your own context too, before reviewing: you need the
-project's conventions for the PR/commit checks below.
+workspace's conventions for the PR/commit checks below.
 
 ## Comments (MUST FOLLOW)
 
@@ -81,9 +81,18 @@ unreadable hunk is *rename it* / *split it* / *make the type say it*. Only the *
 reviewer flags junk comments the diff adds. **Generated files are exempt** from every comment
 rule. Full rules, scope and priorities: `references/comments.md`.
 
-## Project PR conventions (apply when the project defines them)
+## Fixing a finding (MUST FOLLOW)
 
-When a PR is attached, or in PR mode, discover the project's PR/commit/branch rules in its
+A reviewer's `fix` text is a hint, not a design. Before a fix adds a new helper, type,
+function or API — even when the finding names one — search the existing code and read the
+workspace guides (the docs the workspace router names for that subject). When an existing
+API already does the job, the fix uses it, and the fixer's brief names that API and the
+guide. A pair or second reviewer that confirms such a finding checks the same thing first.
+A fix that adds a parallel mechanism to an existing one is a new defect.
+
+## Workspace PR conventions (apply when the workspace defines them)
+
+When a PR is attached, or in PR mode, discover the workspace's PR/commit/branch rules in its
 own skills and enforce them: title format, description shape, commit & branch hygiene.
 Report them under a **[Hygiene]** area on the same P0/P1/P2 scale. These findings are yours,
 not the workflow's. The checks, where the rules live, and the priority mapping:
@@ -103,7 +112,7 @@ records become rows: `references/security.md`.
 
 Before anything else, ask the user what to review (through `ask-user`). When the caller names the mode (`task finish` names Local), skip the question:
 
-- **Local** — review the current branch's local code changes. Even in Local mode you **always detect an attached PR** (`gh pr view --json number,title,url,body,baseRefName,commits`) — a PR attached to this code is never out of scope. If one exists, also run the PR-level checks (title/description per **Project PR conventions** + commit & branch hygiene) and surface them as findings. In Local mode you **report** those PR issues and **ask the user to fix them** — you do NOT `gh pr edit`/`gh pr comment` (that's PR mode).
+- **Local** — review the current branch's local code changes. Even in Local mode you **always detect an attached PR** (`gh pr view --json number,title,url,body,baseRefName,commits`) — a PR attached to this code is never out of scope. If one exists, also run the PR-level checks (title/description per **Workspace PR conventions** + commit & branch hygiene) and surface them as findings. In Local mode you **report** those PR issues and **ask the user to fix them** — you do NOT `gh pr edit`/`gh pr comment` (that's PR mode).
 - **PR** — review a pull request. Detect the current branch's PR with `gh pr view --json number,title,url,body`. If one exists, use it. If none exists, ask the user to provide a PR link (or number).
 
 Then follow the matching path. **Local** → the **Local review** section below. **PR** → `references/pr-review.md`.
@@ -137,11 +146,11 @@ Keep the two **commands** — they are what the workflow passes to the reviewers
 - `filesCmd`: `git diff --name-only <BASE>...HEAD`
 - `diffCmd`: `git diff <BASE>...HEAD`
 
-Derive the skill list from the file list per **How the reviewers load project skills**.
+Derive the skill list from the file list per **How the reviewers load skills**.
 
 ### 1b. Check the attached PR (if any)
 
-If `gh pr view` found a PR for this branch, run the **Project PR conventions** checks
+If `gh pr view` found a PR for this branch, run the **Workspace PR conventions** checks
 against it now — title format, description shape, and commit & branch hygiene (rebased /
 not behind base, no `wip`/duplicate/fixup commits, no stray or generated files
 committed). Collect the results as **[Hygiene]** findings for the final report. **Local
@@ -160,7 +169,7 @@ inputs:
   "diffCmd":  "git diff <BASE>...HEAD",
   "branch":   "<current branch>",
   "commits":  "<git log <BASE>..HEAD --oneline output>",
-  "skills":   ["sadensmol-router", "<project>-router", "sadensmol-programming-go"],
+  "skills":   ["sadensmol-router", "<workspace>-router", "sadensmol-programming-go"],
   "testReads": ["sadensmol-programming-go → references/integration-tests.md"],
   "goal":     "<the stated goal of the change, if you know it — issue title, plan step, or user's words>",
   "security": "review"
@@ -266,7 +275,7 @@ the user needs to see what happened to each, not just what was found:
 ```
 
 Reference findings by their table number so the two tables read together.
-A declined finding MUST carry its reason inline — "the project skill says X"
+A declined finding MUST carry its reason inline — "the workspace skill says X"
 is a valid reason, "not relevant" is not.
 
 **Do not replace the tables with the disposition table.** It is an addition.

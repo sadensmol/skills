@@ -1,4 +1,4 @@
-# `cleanup` — shared flow (the project skill supplies the script and its specifics)
+# `cleanup` — shared flow (the workspace skill supplies the script and its specifics)
 
 **Triggers:** "task cleanup", "cleanup task", "delete task", "task delete".
 
@@ -10,7 +10,7 @@ of the work, so it has a hard readiness gate.
 
 Verify — never assume, and never take the user's "it's done" as the check — and record
 explicit values in the temporary `<worktree-base>/.task-cleanup-checklist` (deleted with
-the worktree) before running the script. The project supplies the tracker and CI
+the worktree) before running the script. The workspace skill supplies the tracker and CI
 commands:
 
 - `planned_work=complete` — every planned item is done; cut scope is `related_work=none`
@@ -28,14 +28,14 @@ commands:
 - `ticket_updates=confirmed` — the task's issue and every follow-up reflect the final
   scope and outcome.
 - `tracker_state=verified` — the task's issue was re-read **now**, after every merge. Its
-  state and assignee match the project tracker flow for a merged task. A merge automation
+  state and assignee match the workspace tracker flow for a merged task. A merge automation
   can change them after `finish`, so a value that `finish` reported is not proof. Any
   drift is set back per that flow and read back. When the flow does not decide the case,
-  ask the user. The project hook names the flow.
+  ask the user. The workspace hook names the flow.
 - `infra=clean` — every session branch and infra console closed; no task-owned Docker
   containers, networks or volumes; no `.infra.lock` holding a stack that is still up.
 
-The project's `cleanup-task.sh` validates the checklist, verifies every related PR is
+The workspace's `cleanup-task.sh` validates the checklist, verifies every related PR is
 approved and merged with `SUCCESS`/`SKIPPED` checks, rejects dirty worktrees, and
 removes task-owned Docker resources. It refuses when any check fails — report every
 failed guard and stop; the next step is fixing that check or waiting for the merge,
@@ -65,13 +65,13 @@ authorize `--force`; that needs its own confirmation.
    list in one line (or say there were none). Without `stop-subagent`, say so and ask the
    user to close them from the UI before you run the script; never claim you stopped one.
 3. **Complete the checklist** with the values above.
-4. **Run the project's script** (`bash <project-skill-dir>/scripts/cleanup-task.sh
+4. **Run the workspace's script** (`bash <workspace-skill-dir>/scripts/cleanup-task.sh
    <branch>`). Before deleting anything it sweeps the task's consoles:
    - **found by `cwd`, not by name** — every agterm session whose cwd is the worktree
      base or under it (`agtermctl tree --json`, needs `jq`); consoles are named after
      their directory, so a name match misses them and they keep holding host ports;
    - the task's own session and the session running the script are excluded;
-   - **each console's stack is stopped before it is closed** (Ctrl-C, the project's
+   - **each console's stack is stopped before it is closed** (Ctrl-C, the workspace's
      teardown target, wait) — closing a pty does not stop its containers;
    - this runs before the worktree is removed, since the teardown needs the compose file;
    - no `jq` → the script refuses; bypass only with the user's explicit `--force`.

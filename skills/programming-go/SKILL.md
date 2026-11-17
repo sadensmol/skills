@@ -154,7 +154,8 @@ on meaning) are in `sadensmol-programming` → *Testing*.
 ### Go test rules
 
 - Test-data constants: lowercase when local to one test, uppercase when shared.
-- Run tests via the editor's test tasks, never the command line.
+- Run tests the way the project defines (`make test`, a script, the editor's test task
+  named in the project docs). Only when the project defines no way, use `go test`.
 - Integration tests (under `tests/`) → read `references/integration-tests.md` (only then).
 
 ## Read on demand

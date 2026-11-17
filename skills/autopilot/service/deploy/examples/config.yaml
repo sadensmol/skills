@@ -1,0 +1,16 @@
+# Copy to <workspace folder>/.workspace/autopilot/config.yaml and run chmod 600 on it.
+# Never commit the copy. Secrets go to secrets.env, never here.
+owner:
+  # Slack member id of the owner. It starts with U.
+  slack_user_id: "UXXXXXXXXXX"
+service:
+  # Folder of the autopilot service source: service/ in the autopilot skill.
+  source_dir: "/path/to/skills/autopilot/service"
+# Optional. A repo with no entry lives at <workspace folder>/<repo>.
+# repo_paths:
+#   myproduct: "/path/to/myproduct"
+heartbeat_minutes: 30
+loop_cap: 3
+wave_timeout_minutes: 45
+pr_poll_minutes: 5
+gate_timeout_minutes: 45

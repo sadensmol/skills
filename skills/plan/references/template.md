@@ -210,8 +210,8 @@ sequenceDiagram
 
 ### Project checks
 
-<The definition-of-done tests the project skill requires (e2e suite, docs check, …), each
-with its `V<n>`, suite and env. `none` when the project names none.>
+<The definition-of-done tests the workspace skill requires (e2e suite, docs check, …), each
+with its `V<n>`, suite and env. `none` when the workspace skill names none.>
 
 ### Test scope
 
@@ -277,7 +277,7 @@ none yet
 - **Measurements (MUST FOLLOW)** — every real measurement that bears on the task:
   platform data (metrics, logs, traces, DB row counts and query plans, dashboards) and
   test data (existing tests, benchmarks, load or profiling tools, run unchanged). Take
-  the tools and their access rules from the project skill. Use every source that
+  the tools and their access rules from the workspace skill. Use every source that
   applies, not only one.
   - A row holds a real, measured value, with its unit, env and time window. An estimate
     or an expectation is not a measurement: it goes to `### Risks` or `## Q&A`.
@@ -293,7 +293,7 @@ none yet
   the reason there is no alternative.
 - Every chosen option that neither the sources nor the user settled is also a `D<n>`
   entry in `## Decisions`.
-- **Best practices** cites the project's own rules first (project skill, docs, repo
+- **Best practices** cites the project's own rules first (workspace skill, docs, repo
   `CLAUDE.md`), then general ones.
 
 ### Plan
@@ -302,7 +302,7 @@ none yet
 - **check** is concrete: a test name or package, a command, a request and its expected
   response. "Works" is not a check.
 - **Story split** is only for story planning (a parent ticket split into children). Take
-  the ticket fields from the project's tracker skill (`<project>-linear`,
+  the ticket fields from the workspace's tracker skill (`<workspace>-linear`,
   `sadensmol-jira`, …): title format, assignee, estimate scale and minimum, labels,
   project, parent, cycle. A value the rules and the user do not give → ask, never guess.
   Do not create the tickets during PLAN; the plan lists them, and the tickets are created
@@ -323,7 +323,7 @@ none yet
   written before it, old clients and API callers, old config, and old and new versions
   running at once during a deploy. What only this task added has no old data
   (`sadensmol-programming` → *Backward-Compatible Data*).
-- **Project checks**: take the required tests and suites from the project skill (its task
+- **Project checks**: take the required tests and suites from the workspace skill (its task
   skill's definition of done). Do not invent them.
 - **Test scope** follows the task test scope (`sadensmol-task` → *Test scope*): targeted
   tests while working, the full suite in CI at `finish`.

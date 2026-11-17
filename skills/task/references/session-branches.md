@@ -19,7 +19,12 @@ closes its agterm test sessions as `SKILL.md` → *Test sessions* says.
 
 **The brief, in this order:** (1) where — base, repo, branch (or PR/run URL); every path
 under the base; (2) inputs — for a fixer/builder the `PLAN.md` path, the failure or
-finding, the files in scope; (3) steps — exact commands; a stack-bound test lane gets a
+finding, the files in scope, and the skills to load: the language skills **plus every
+skill and guide file the workspace router requires before writing that code** (its docs
+skill and the guide for the change's subject, by path). A brief that lists only the
+language skills sends the branch past the workspace's own conventions, and it rebuilds
+what an existing API already does. For a finding's fix, name the existing API the fix
+must use (see `sadensmol-code-review` → *Fixing a finding*); (3) steps — exact commands; a stack-bound test lane gets a
 stack the main session already brought up healthy and runs only the test command
 against it; for a runner the retry conditions and limit; (4) done — the condition that
 ends the lane; (5) never — commit, push, merge, ask the user, start/stop/restart a

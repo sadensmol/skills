@@ -49,7 +49,7 @@ can be denied by config, in which case keep the plan in your reply.
 
 Use Playwright MCP with `--extension` to access the user's open browser tabs and their
 authenticated sessions. Choose the workspace-specific server when one is configured
-(for example, `playwright-<project>`, named by the project's own skill); otherwise use `playwright-extension`. Call its
+(for example, `playwright-<workspace>`, named by the workspace's own skill); otherwise use `playwright-extension`. Call its
 `browser_tabs` tool to list and select an existing tab, then navigate that tab with its
 `browser_navigate` tool. Do not create or close a tab unless the user explicitly requests
 it. A profile-specific `PLAYWRIGHT_MCP_EXTENSION_TOKEN` bypasses connection approval but
@@ -78,16 +78,20 @@ and report the missing agent.
 
 ## planner-subagent
 
-The `task` tool with `subagent_type: "planner"`. The global config defines that agent on
+The `task` tool with `subagent_type: "task-planner"`. The global config defines that agent on
 the planning model at the `high` variant, with edits allowed. Pass its `task_id` to
-continue the same planner for a revision. If no `planner` agent exists, stop and report
-the missing agent.
+continue the same planner for a revision. The definition in `agents/task/task-planner.md`
+serves the task flow and standalone plans. If it is missing, report the installation
+fault; never substitute an Autopilot agent or ask permission to use `general` instead.
+
+Autopilot workers use distinct `autopilot-*` agent ids from `agents/autopilot/`.
+Their mission protocol never applies to a task-flow planner.
 
 ## main-subagent
 
 The `task` tool with `subagent_type: "general"`. It has no model of its own, so it runs on
 the model of the session that starts it: the model of the task stage. The global config
-must also define the primary agent `planning` beside `main`, `runner` and `planner`: the
+must also define the primary agent `planning` beside `main`, `runner` and `task-planner`: the
 planning model at the `high` variant, with the permissions of `main`. A task session
 starts on `planning` in the PLAN stage and on `main` in IMPL (task skill → *Stages*). If
 `planning` does not exist, stop and report the missing agent.

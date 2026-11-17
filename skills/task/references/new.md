@@ -1,17 +1,17 @@
-# `new` — shared behaviour (the project skill adds its layout and hooks)
+# `new` — shared behaviour (the workspace skill adds its layout and hooks)
 
 **Triggers:** "task new", "new task", "start task", "task <branch-name>", "create
 worktree(s)", "task new <branch> --pair".
 
-`new <branch>` and a bare `<branch>` are the same. The project's `new-task.sh` does the
+`new <branch>` and a bare `<branch>` are the same. The workspace's `new-task.sh` does the
 work:
 
 ```bash
-bash <project-skill-dir>/scripts/new-task.sh <branch> [--base <branch> | --base <repo>:<branch>]... [--pair | --single]
+bash <workspace-skill-dir>/scripts/new-task.sh <branch> [--base <branch> | --base <repo>:<branch>]... [--pair | --single]
 ```
 
 - **Branch does not exist** → cut a new branch and worktree(s), refresh deps per the
-  project, open the session, seed `task plan` (per the project's auto-plan rule).
+  workspace, open the session, seed `task plan` (per the workspace's auto-plan rule).
 - **Branch or worktree already exists** → reuse it: no new branch, open or select the
   session. This path stashes, fetches and rebases each repo. `task switch` passes `--open`
   to skip that and every other repo step (`references/status.md` → *`switch`*).
@@ -19,10 +19,11 @@ bash <project-skill-dir>/scripts/new-task.sh <branch> [--base <branch> | --base 
 ## Mode (MUST FOLLOW)
 
 When `new` is about to create the worktree (`<root>/.worktrees/<branch>/` does not exist)
-and the arguments carry neither `--pair` nor `--single`, do not ask. Take the mode of the
-most recently created worktree base under `<root>/.worktrees/` (`.pair/config.json` at
-its base = pair); no worktree → single. Pass the matching flag and name the mode in the
-start line; the user changes it with `task switch --pair|--single`. The first run records
+and the user has not explicitly chosen `--pair`, `--single`, or a mode in words, ask
+the user to choose **Single** or **Pair** through `ask-user`. Wait for the answer before
+creating worktrees or launching agents. Never infer the mode from another task or choose
+a default. This setup gate precedes the task's *Autonomy* rules. Pass the matching flag
+and name the mode in the start line. The first run records
 the mode — `.pair/config.json` at the base means pair, no `.pair/` means single — and
 every later open reuses it without asking (`switch`, `new <existing>`, a re-run after a
 closed session). `--single` is an explicit answer and never removes `.pair/`. Pair
@@ -43,22 +44,25 @@ is required (MUST FOLLOW):** the session opens in the background, and the user's
 moves to it. An existing session with that name is reused and is not selected either. The script then sets the title-bar context
 to the task id (`agtermctl session context <ID> --target <id>`) and flags it
 (`agtermctl session flag on --target <id>`), so the flagged view lists every live task
-(agterm 0.26.0+, best-effort). It also tints the row with the project's color
-(`agtermctl session tint <color> --target <id>`, agterm 0.39+, best-effort; the project
+(agterm 0.26.0+, best-effort). It also tints the row with the workspace's color
+(`agtermctl session tint <color> --target <id>`, agterm 0.39+, best-effort; the workspace
 skill's `new-task.sh` names the color), and `pair.py respawn` carries the tint over. `cleanup-task.sh` mirrors this naming to close it.
 
-## Autopilot
+## Task autonomy
 
-Claude Code launches with `--dangerously-skip-permissions` and the appended autopilot
-prompt. OpenCode (`OPENCODE=1`, where the project supports it) launches with `--auto`
+Claude Code launches with `--dangerously-skip-permissions` and the appended task-flow
+prompt. OpenCode (`OPENCODE=1`, where the workspace supports it) launches with `--auto`
 and always a first `--prompt` (`task plan`, or a resume prompt), so it never sits on its
 start screen. The launch line carries the stage (`SKILL.md` → *Stages*): Claude Code the
 flags `pair.py claude-args` prints (`--session-id`/`--resume`, `--model`, `--effort`),
 OpenCode the agent `pair.py opencode-args` prints (`--agent planning` in PLAN, `--agent
-main` in IMPL). The project `new-task.sh` also answers `--print-command`, the writer
+main` in IMPL). The workspace `new-task.sh` also answers `--print-command`, the writer
 start line that `pair.py stage` uses. Both resolve routine questions alone and ask the
 user only at the three points of `SKILL.md` → *Autonomy*: the plan gate, the pre-PR diff
 gate, and a critical decision.
+
+These permission flags do not select the Autopilot flow. Keep `Workflow: task` in launch
+and subagent prompts; Autopilot workers run only through their own service.
 
 ## Fresh from remote (new worktrees)
 
@@ -79,7 +83,7 @@ over a stale local copy; a local ref is the last resort.
 A value is always a plain branch name (no `origin/`, no PR number). Prose forms mean the
 same: "based on `X`", "on top of `X`", "stacked on `X`", "parent branch `X`", "parent
 task `X`". Everything after the branch token that is not a recognised flag is context,
-never part of the branch name. The project skill turns what the user gave into `--base`
+never part of the branch name. The workspace skill turns what the user gave into `--base`
 values before it runs the script:
 
 | The user gave | `--base` values |
@@ -151,11 +155,11 @@ often live on a branch with another key or no key, and on a different branch in 
 repo. So never resolve the key with `git ls-remote | grep <KEY>`. Before you create
 anything:
 
-1. **Fetch the base task** through the project's tracker skill. Collect every GitHub PR
+1. **Fetch the base task** through the workspace's tracker skill. Collect every GitHub PR
    URL linked to it (`github.com/<owner>/<repo>/pull/<n>`): Linear → the `attachments`
    of `get_issue`; Jira → `GET /rest/api/2/issue/<KEY>/remotelink` (the `object.url`
    values). The tracker cannot be reached → say so and stop; never guess a base.
-2. **Search GitHub as well**, in every repo of this worktree (the project skill lists
+2. **Search GitHub as well**, in every repo of this worktree (the workspace skill lists
    them) — PRs whose title or body name the key are not always linked:
 
    ```bash

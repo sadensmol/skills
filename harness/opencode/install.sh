@@ -7,7 +7,7 @@
 # Code plugin covers with its UserPromptSubmit hook. Everything else in the
 # config (models, agents, permissions, mcp) is yours and is left untouched unless
 # --workspace-mcp explicitly registers a workspace-selected server; it
-# only warns when an agent the task skill starts (`planning`, `main`) is missing.
+# only migrates the known legacy task planner id and warns about missing task agents.
 #
 # It also registers this repository's TUI plugin (tui/codex-resets: the Codex
 # limit reset countdown beside the prompt) in the `plugin` list of tui.json,
@@ -15,7 +15,7 @@
 #
 #   usage: harness/opencode/install.sh [--dry-run] [--workspace-mcp <name>]...
 #
-# Nothing here is specific to a machine or a project: the repository root comes
+# Nothing here is specific to a machine or a workspace: the repository root comes
 # from this script's own location and the namespace from the marketplace
 # manifest, so a stranger's clone wires itself up the same way.
 set -eu
@@ -86,7 +86,12 @@ MERGED="$(jq \
   --arg repo "$REPO" \
   --argjson servers "$WORKSPACE_MCPS" \
   '(.["$schema"] //= $schema)
-   | .skills.paths = ((.skills.paths // []) + [$skills] | unique)
+    | if .agent.planner.mode == "subagent"
+         and .agent.planner.prompt == null
+         and .agent.planner.description == "Explores the code and writes or revises a plan file (task PLAN.md or any plan the user asks for). Edits no other file."
+      then .agent["task-planner"] //= .agent.planner | del(.agent.planner)
+      else . end
+    | .skills.paths = ((.skills.paths // []) + [$skills] | unique)
    | .instructions = (
        ((.instructions // [])
          | map(select(startswith($harness) | not))
@@ -136,7 +141,7 @@ fi
 
 # The task skill starts its sessions on these agents (opencode.md); their models
 # are yours to choose, so a missing one is reported, never written.
-for agent in planning main; do
+for agent in planning main task-planner; do
   jq -e --arg a "$agent" '.agent[$a]' "$CONFIG" >/dev/null 2>&1 \
     || echo "note: no \"$agent\" agent in $CONFIG — the task skill needs it (harness/opencode/opencode.md)" >&2
 done

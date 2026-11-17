@@ -12,7 +12,7 @@
 # to a file, which would truncate the router; the installer therefore sets
 # additionalContextLimit to 0 for this handler.
 #
-# Nothing below is machine- or project-specific: the repository is derived from
+# Nothing below is machine- or workspace-specific: the repository is derived from
 # this script's own location, and the namespace from the marketplace manifest,
 # so a stranger's clone injects that clone's router.
 set -u

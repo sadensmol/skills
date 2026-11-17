@@ -1,13 +1,13 @@
-# `finish` — shared skeleton (the project skill supplies the hooks)
+# `finish` — shared skeleton (the workspace skill supplies the hooks)
 
 **Triggers:** "task finish", "finish task", "finish", "create PR(s)", and the end of
 implementation: the writer starts `finish` itself when every step of `PLAN.md` or of the
 user request is done and its targeted tests are green (`SKILL.md` → *Autonomy*).
 
-Read the project skill's `references/finish.md` together with this file. This file
-holds the steps every project shares; each **[hook]** names what the project file
+Read the workspace skill's `references/finish.md` together with this file. This file
+holds the steps every workspace shares; each **[hook]** names what the workspace file
 supplies (repo set, commands, PR conventions, review bot, post-merge gates, tracker).
-Where the project file is more specific, it wins.
+Where the workspace file is more specific, it wins.
 
 ## Start in a clean context (MUST FOLLOW)
 
@@ -133,7 +133,7 @@ side" are not passes. **[hook]** the exact commands per repo and language.
 - **Never commit red or unrun.** Red, or could not run → stop and fix it or make it
   runnable. Never commit and "watch CI" for a check this gate runs locally.
 - **Fan it out as session branches, launched together** — one per changed repo (and per
-  language/side where the project says so), plus the code-review branch. Serialize only
+  language/side where the workspace skill says so), plus the code-review branch. Serialize only
   lanes that contend for the same local stack (`references/infra.md`). Wait for every
   branch before touching a file; the commit stays in the main session.
 - **Local code-review gate** (SKILL.md → *Pre-PR diff gate*): runs here, before §4b.
@@ -152,7 +152,7 @@ side" are not passes. **[hook]** the exact commands per repo and language.
 ## 4a. Task-scope gate — the diff does what the task asked (MUST FOLLOW)
 
 Before any commit, push or PR, prove the work matches the task. Read the task and post
-the comment through the project's tracker skill; the task is the one the branch maps to
+the comment through the workspace's tracker skill; the task is the one the branch maps to
 (no mapping → ask the user which task; never skip the gate).
 
 1. **Read the task in full** — title, description, acceptance criteria and every comment
@@ -208,7 +208,7 @@ exception. The PR assignee is not a hook: it is always the operator (step 3).
    base PR from `basePr`. `--base` keeps the diff to this task's commits. A PR already
    open for the branch → `gh pr view --json url -q .url` and reuse it. Record it:
    `tb_set <worktree-base> <repo-name> pr <url>`.
-   **Assignee — always the operator (MUST FOLLOW), in every project:** `gh pr create
+   **Assignee — always the operator (MUST FOLLOW), in every workspace:** `gh pr create
    --assignee @me` (`sadensmol`). GitHub's assignee is the person who works on the PR, so
    a reviewer or a ticket owner never goes there; they go in `--reviewer` or the tracker.
    A reused PR → `gh pr edit <pr> --add-assignee @me`. **No user instruction and no pair
@@ -272,7 +272,7 @@ implementation. Do not touch docs during implementation or the earlier `finish` 
    check is green (§6). A code change after this step runs this step again.
 2. **Find the docs with one agent:** run the `documentation` reviewer agent once over the
    final diff of every repo (one session branch). Give it the hints of `PLAN.md` →
-   `## Docs` and the project's doc map (**[hook]**). Its findings are the list.
+   `## Docs` and the workspace's doc map (**[hook]**). Its findings are the list.
 3. **Update every listed doc in one pass**, in plain words (`sadensmol-plan` → *Write
    simply*). Do not re-run the agent on the docs diff.
 4. **The user approves the docs diff** through `review` (§4b; a markdown-only delta opens
@@ -289,7 +289,7 @@ its docs behind. Nothing to change → say `docs: none — <why>` in the report,
 
 **Read the tracker issue back after the last merge (MUST FOLLOW).** A tracker's merge
 automation can change the issue's state or assignee after the tracker update. Re-read the
-issue, compare it with the project tracker flow, set it again where it differs, and read
+issue, compare it with the workspace tracker flow, set it again where it differs, and read
 it back once more. Report the final state and assignee. When `finish` ends before the
 merge, `cleanup` does this check instead (its `tracker_state` guard).
 

@@ -1,11 +1,11 @@
-# Worktree helpers and project root
+# Worktree helpers and workspace root
 
 Read this when a handled-here subcommand or `references/infra.md` needs `$root`, `$branch`,
 `$base`, `$WT` or `real_changes`.
 
-## Project root — derived from the cwd only
+## Workspace root — derived from the cwd only
 
-`list`, `switch` and `status --all` work on the project root (the directory holding
+`list`, `switch` and `status --all` work on the workspace root (the directory holding
 `.worktrees/`):
 
 ```bash
@@ -18,7 +18,7 @@ fi
 echo "${root:-NO_ROOT}"
 ```
 
-`NO_ROOT` → tell the user to run it from inside the project or one of its worktrees, and
+`NO_ROOT` → tell the user to run it from inside the workspace folder or one of its worktrees, and
 stop. Never guess a path and never ask a skill for one.
 
 ## Worktree helpers (used by every handled-here subcommand)

@@ -1,0 +1,13 @@
+#!/bin/bash
+# autopilot-lock — close every session that works on the disk, stop the box's Docker and close the disk.
+set -euo pipefail
+ctl="$HOME/.local/bin/agtermctl"
+if [ -x "$ctl" ]; then
+  "$ctl" tree --json 2>/dev/null | jq -r --arg home "$HOME" '
+    [.. | objects | select(has("id") and has("cwd"))
+      | select((.cwd // "") | startswith($home + "/workspaces") or startswith("/secure"))
+      | .id] | unique[]' | while read -r id; do
+    "$ctl" session close --target "$id" >/dev/null 2>&1 || true
+  done
+fi
+sudo /usr/local/sbin/autopilot-disk close

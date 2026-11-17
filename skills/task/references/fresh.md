@@ -10,6 +10,12 @@ task, the worktree, the agterm session and the pair stay the same. Run:
 python3 <sadensmol-task-skill-dir>/scripts/pair.py fresh --base <worktree-base> [--then plan|impl|finish|reviews] [--single]
 ```
 
+**Resolve the live session mode first.** A `.pair/` directory does not prove this session
+is paired. Check `pair.py inspect --base <base> --session <current-session-id> --get paired`
+and confirm the session's worktree in the terminal tree. For a single session beside a
+pair record, pass `--single` and use `.task-stage`. Never restart the pair's saved session
+instead of the current single session. Apply this check to every `fresh` purpose.
+
 | Argument | Stage | First prompt of the writer |
 |---|---|---|
 | `--then plan` | PLAN | `Plan discussion:` — load the task skill, read `PLAN.md`, open the plan gate. Refused on IMPL |
@@ -39,7 +45,7 @@ request. Claude Code applies only the last `--settings`, so that file carries th
 too. A later `stage` resumes the conversation with the plugin as installed.
 
 - `--single`: a single session opened beside a pair (record `.task-stage`).
-- `--launcher <project new-task.sh> --branch <branch>`: only when the error asks for it
+- `--launcher <workspace new-task.sh> --branch <branch>`: only when the error asks for it
   (a task opened before stages).
 
 ## When it runs
@@ -56,6 +62,47 @@ too. A later `stage` resumes the conversation with the plugin as installed.
 `fresh` is never an approval. `--then impl` runs only after an explicit approval, and
 `--then finish` never approves a diff.
 
+## Verified plan handoff (MUST FOLLOW)
+
+For `--then plan`, the handoff ends with a working plan review, not a detached launch.
+
+1. Before restarting, check the recorded task session against `agtermctl tree --json`.
+   Confirm its identity and worktree. Never assume a saved session id still exists.
+   If it is missing, do not launch against it or guess another session id.
+   Continue the plan gate in the current task session (`references/plan.md`, step 6).
+2. Check the task's existing review with `plannotator-session.sh --status`.
+   Reuse a current plan gate. Do not restart or close it merely to clear context.
+   Preserve notes before replacing a stale review (`references/plannotator.md`).
+3. With a valid target and no live review, request the restart once.
+   `restart: started` means launch requested, not restart completed. Read the returned log
+   and confirm the replacement writer received the `Plan discussion:` prompt.
+   If this session survives while startup runs, keep a background watcher through the
+   harness. Do not leave an unobserved handoff or claim completion.
+4. A missing target, failed launcher, or exited startup without a replacement is a failed
+   handoff. Keep the plan and its logs. Continue the gate in the current session without
+   asking the user to repeat the command. Do not retry the same stale target.
+5. The replacement writer, or the recovering writer, owns the gate until its page loads.
+   Keep the pair review and explicit approval rules. Never infer approval from recovery.
+   Verify the loaded review companion before telling the user the plan review is open.
+
+This recovery is specific to the plan handoff. It does not authorize implementation
+before approval or bypass the model change required for the implementation stage.
+
+## Verified implementation handoff (MUST FOLLOW)
+
+After explicit approval, transition to implementation without another user command.
+Validate the recorded session against the live session and worktree before restarting.
+If the record is stale, recover the task session through the task helper. Use only a
+verified session for this worktree; never guess an id or repeatedly use the stale one.
+Preserve the approval and decision logs throughout recovery.
+
+Observe the restart through the harness's completion path. A `restart: started` response
+only confirms a launch request. Read its log and confirm the replacement writer received
+the `Implementation:` prompt. If startup fails, diagnose and recover in this continuation.
+Do not return a successful handoff report or require the user to run another command.
+Keep the required implementation model and explicit approval guards.
+If recovery genuinely needs user action, name that specific blocker instead of going idle.
+
 ## What it does
 
 - It refuses with exit 5 while a pair thread is open, and with exit 1 without an agterm
@@ -70,6 +117,7 @@ too. A later `stage` resumes the conversation with the plugin as installed.
   single session. User decisions are in `PLAN.md` on PLAN and in `.task-user-decisions.md`
   on IMPL, in both modes. Before you run `fresh`, make sure these logs hold every decision:
   the new conversations know nothing else.
-- The restart runs detached. Tell the user in one line that both sessions restart with a
-  clean context, then end the turn.
+- The restart runs detached. For `--then plan`, follow *Verified plan handoff* before
+  ending the turn. For `--then impl`, follow *Verified implementation handoff*.
+  For other purposes, report only the restart state the output proves.
 - A later `stage` resumes the new conversations.

@@ -15,17 +15,17 @@ installing — only three env vars.
 Three values drive every call. Resolve each in this order:
 
 1. **Env var** (`JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`) — highest.
-2. **A loaded project skill's default** — a `<project>-<project>` dev skill may
+2. **A loaded workspace skill's default** — a `<workspace>-<workspace>` dev skill may
    supply the site URL and email for its workspace, so the user only has to
    provide the token. Use those defaults when the env var is unset.
 3. Otherwise unknown → **First-Time Setup**.
 
 **`JIRA_API_TOKEN` is the only true secret and must come from the environment**
-(the user's `~/.profile`) — a project skill never carries the token. Base URL
+(the user's `~/.profile`) — a workspace skill never carries the token. Base URL
 and email are not secret and may come from either source.
 
 **Backend check.** Confirm the token is present WITHOUT printing it, and that a
-base URL + email are known (from env or a project-skill default):
+base URL + email are known (from env or a workspace-skill default):
 
 ```bash
 [ -n "$JIRA_API_TOKEN" ] && echo "token ok" || echo "missing JIRA_API_TOKEN"
@@ -38,11 +38,11 @@ base URL + email are known (from env or a project-skill default):
 
 | Var | Example | Meaning |
 |-----|---------|---------|
-| `JIRA_BASE_URL` | `https://yourorg.atlassian.net` | Site URL, no trailing slash (env OR project-skill default) |
-| `JIRA_EMAIL` | `you@example.com` | Atlassian account email (env OR project-skill default) |
+| `JIRA_BASE_URL` | `https://yourorg.atlassian.net` | Site URL, no trailing slash (env OR workspace-skill default) |
+| `JIRA_EMAIL` | `you@example.com` | Atlassian account email (env OR workspace-skill default) |
 | `JIRA_API_TOKEN` | `ATATT3x...` | API token — **secret, env only** |
 
-When base URL / email come from a project skill, substitute their literal values
+When base URL / email come from a workspace skill, substitute their literal values
 into the curl calls instead of `$JIRA_BASE_URL` / `$JIRA_EMAIL` (only the token
 stays a `$JIRA_API_TOKEN` reference — never inline it).
 

@@ -5,7 +5,7 @@
 # an agterm older than 0.39 has no companions, so the call fails and prints the error.
 #
 # Usage: bash child-session.sh <name> [agtermctl session new options...]
-#   sid="$(bash child-session.sh "test core DEV-12" --cwd "$repo" --no-select --command "...")"
+#   sid="$(bash child-session.sh "test core" --cwd "$repo" --no-select --command "...")"
 # Prints what `agtermctl session new` prints: the new id (JSON with --json).
 set -u
 

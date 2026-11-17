@@ -6,8 +6,8 @@ Claude Code, Codex and OpenCode, and it also carries a Claude Code plugin
 Everything committed here is world-readable, forever, including git history.
 
 Therefore every file in `skills/`, `agents/`, `commands/`, `harness/` and `plugin/` must be **generic**: usable by
-a stranger who has none of the author's projects, machines, accounts, or tools.
-Project-specific knowledge lives in the private namespace repositories, never here.
+a stranger who has none of the author's workspaces, machines, accounts, or tools.
+Workspace-specific knowledge lives in the private namespace repositories, never here.
 
 Layout and install instructions are in `README.md`. Two rules follow from the
 layout and are easy to get wrong:
@@ -33,35 +33,53 @@ Not now, not "temporarily", not in an example.
 - A leaked secret is not fixed by a follow-up commit — it stays in history. Rotate
   it, then rewrite history.
 
-## 2. No project-specific knowledge in `skills/`, `agents/`, `commands/`, `harness/` or `plugin/`
+## 2. No workspace-specific knowledge in `skills/`, `agents/`, `commands/`, `harness/` or `plugin/`
 
-The full layer model — dependency direction, hooks, where a rule goes, how a project skill
-pairs with a generic one — is the `sadensmol-sadensmol` skill. Load it before any skill edit.
+The full layer model — dependency direction, hooks, where a rule goes, how a workspace skill
+pairs with a generic one — is the `sadensmol` skill. Load it before any skill edit.
+A workspace is one company context (its own Linear and Slack workspace and `.workspace/`
+folder); a project is a project inside a workspace.
 
 A `sadensmol-` skill is the **generic layer**. It must not contain:
 
-- Project, company, product, repo, or service names.
-- Workspace names, plugin namespaces of private projects, or branch/issue prefixes
-  (`ABC-\d+` as a *pattern* is fine; a real project's prefix is not).
+- Workspace, company, project, repo, or service names.
+- Workspace names, plugin namespaces of private workspaces, or branch/issue prefixes
+  (`ABC-\d+` as a *pattern* is fine; a real workspace's prefix is not).
 - Tracker sites, team names, status names, CI workflow names, environment names.
 - Domain vocabulary that identifies the business (entities, currencies, partners).
-- Repo layout facts ("project X is single-repo, project Y is multi-repo").
+- Repo layout facts ("workspace X is single-repo, workspace Y is multi-repo").
 
-Write `<project>` / `<project>-task` / `<project>-<project>` instead. If an example
+No exception, not even for the author's own workspace. A defaults section is a generic
+workflow: it reads every workspace fact (workspace, projects, Linear and Slack workspace,
+teams, prefixes, statuses, channels, repos) from the workspace registry
+`.workspace/settings.json` plus one `.workspace/projects/<project>.json` per project, which the
+user sets up once per workspace. A workspace's own skill
+on the same subject replaces that defaults section whole. Workspace names and facts live only
+in the registry or in that workspace's own skills, never in this repository.
+
+**Secrets, settings and personal data never enter this repository.** MCP server names and
+settings, tokens, emails, full names, user ids and home paths belong in the workspace's local
+`.workspace/` folder (never committed, mode 700), next to the workspace's own folders.
+Skills read them from there at runtime.
+
+Write `<workspace>` / `<workspace>-task` / `<workspace>-<workspace>` instead. If an example
 needs a name, invent a neutral one (`acme`, `myproject`, `org/…`).
 
-**Dispatch, don't special-case.** The top-level skill resolves *which* project skill
+**Dispatch, don't special-case.** The top-level skill resolves *which* workspace skill
 to call, then forwards the request verbatim. Anything needing repository knowledge is
 passed down; anything it handles itself, it handles generically from the cwd alone. If
-you want to add an `if <project>` branch to a `sadensmol-` skill, that logic belongs in
-that project's plugin.
+you want to add an `if <workspace>` branch to a `sadensmol-` skill, that logic belongs in
+that workspace's plugin. A defaults section is not an `if <workspace>` branch: it serves every
+workspace through its registry.
 
-**Where project detail actually lives**, in order:
+**Where workspace detail actually lives**, in order:
 
-1. The project's own plugin (`<project>-<project>`, `<project>-task`, …) — the single
-   place a project's facts and paths are written down.
+1. The workspace's own plugin (`<workspace>-<workspace>`, `<workspace>-task`, …) — the only place
+   a workspace's facts are written down in a skill. A workspace with no plugin keeps them in
+   its registry (`.workspace/settings.json`, `.workspace/projects/<project>.json`). Secrets, settings, personal data and home paths
+   are only in the local `.workspace/`.
 2. The local, unpublished `~/.claude/sadensmol-router-routes.json` — maps cwd
-   substrings to project skills, so names stay off GitHub.
+   substrings to workspace skills, so names stay off GitHub.
 3. Naming convention — an agterm workspace named after its plugin resolves directly
    to `<name>-task`, needing no lookup at all.
 
@@ -76,9 +94,9 @@ form. Resolve values at runtime, in this order:
 2. **Env var**, override first: `TOOL="${TOOL:-$(command -v tool || echo "$HOME/.local/bin/tool")}"`.
 3. **Ask the user.** Never guess a path.
 
-Do not invent a new contract for the project plugins to satisfy just to obtain a
-value ("every project skill must declare X"). Either derive it generically, or hand
-the whole request to the project skill and let it do the work with its own knowledge.
+Do not invent a new contract for the workspace plugins to satisfy just to obtain a
+value ("every workspace skill must declare X"). Either derive it generically, or hand
+the whole request to the workspace skill and let it do the work with its own knowledge.
 The generic layer routes; it does not interview.
 
 Acceptable, because they are conventions rather than identities: `$HOME/.local/bin`,
@@ -92,18 +110,24 @@ Run the sweep, and read the hits — do not trust a clean exit code alone:
 
 ```bash
 grep -rnE '(/Users/|/home/[a-z]|~/[A-Za-z])' skills/ agents/ commands/ harness/ plugin/   # local paths
-grep -rniE '<your project names here>' skills/ agents/ commands/ harness/ plugin/         # project names
+ws=$PWD; while [ "$ws" != / ] && [ ! -d "$ws/.workspace" ]; do ws=$(dirname "$ws"); done
+grep -rniE -f "$ws/.workspace/private-names.txt" skills/ agents/ commands/ harness/ plugin/   # other private names
+grep -rnE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}' skills/ agents/ commands/ harness/ plugin/   # emails
 grep -rniE '(xoxb-|xoxp-|ghp_|github_pat_|ATATT|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY)' skills/ agents/ commands/ harness/ plugin/
 git log --all -p -G'(xoxb-|ghp_|ATATT|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY)' --oneline   # history too
 ```
 
+The private names are listed one per line in `.workspace/private-names.txt`, never in this
+repository. Read every email hit: `you@example.com` is fine, a real address is not. Check
+MCP server names by hand too: they belong in `.workspace/`.
+
 Then check the things grep cannot: does any example, failure story, or table imply a
-real project? A skill that says "this happened — don't repeat" is valuable; write it
+real workspace? A skill that says "this happened — don't repeat" is valuable; write it
 without naming who it happened to.
 
 ## 5. When a rule gets violated
 
-Fix the **rule**, not just the line. If a project name or path slipped into a
+Fix the **rule**, not just the line. If a workspace name or path slipped into a
 `sadensmol-` skill, remove it *and* strengthen the guidance that let it in — the same
 hole otherwise reopens in the next session.
 

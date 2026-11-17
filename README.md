@@ -17,11 +17,14 @@ body. All three harnesses read that format, so the same folder serves all of the
 │   ├── task/SKILL.md                 name: sadensmol-task
 │   └── …
 ├── agents/
-│   └── code-reviewer/                subagents; the filename is the id
+│   ├── code-reviewer/                subagents; the filename is the id
+│   ├── task/                         task-planner for task-flow and standalone plans
+│   └── autopilot/                    autopilot-* agents; separate from the task flow
 ├── commands/                         short slash-command aliases for skills
 │   ├── task.md                       /task -> the `sadensmol-task` skill
 │   ├── retro.md                      /retro -> `sadensmol-retro`
 │   ├── cleanup.md                    /cleanup -> `sadensmol-cleanup`
+│   ├── autopilot.md                  /autopilot -> `sadensmol-autopilot`
 │   └── learn.md                      /learn -> `sadensmol-learn`
 ├── instructions/
 │   └── AGENTS.md                     standing instructions, every harness reads this one
@@ -52,11 +55,20 @@ body. All three harnesses read that format, so the same folder serves all of the
 │   └── run-tests.sh                  the assertions
 ├── plugin/                           Claude Code only — hooks, no skills, no agents
 │   ├── .claude-plugin/plugin.json
-│   └── hooks/                        skill activation, secret scan, pre-commit
+│   └── hooks/                        skill activation, secret scan, guard approval, pre-commit
 └── CLAUDE.md                         rules for working in this repo
 ```
 
 A skill folder holds `SKILL.md` plus optional `references/`, `scripts/` and `assets/`.
+
+`sadensmol` holds the terms and the general architecture rules. The base `sadensmol-` skills
+are generic: their defaults sections (for example in `sadensmol-linear` and `sadensmol-task`)
+read each workspace's data from its registry (`.workspace/settings.json` plus one
+`.workspace/projects/<project>.json` per project, with its tokens and secrets), which you set up once
+per workspace. A workspace's own skill on a subject replaces the matching defaults section
+whole. Workspace facts live only in the registry or in that workspace's own skills. Secrets, settings, personal data and home paths
+stay out of this repository. They live in the local `.workspace/` folder of the workspace,
+which is never committed.
 
 ## Naming
 
@@ -80,6 +92,13 @@ in `name`.
 
 Quote any `description` that contains a colon followed by a space — an unquoted one is
 invalid YAML and tools skip the skill without failing.
+
+Agent ids also share a flat namespace. Task planning uses `task-planner`; Autopilot
+uses `autopilot-planner`, `autopilot-implementer`, `autopilot-qa-plan`,
+`autopilot-qa-verify` and `autopilot-reviewer`. Keep each filename and frontmatter `name`
+equal. Never define an Autopilot worker under a generic task capability name.
+The OpenCode installer migrates the known legacy task `planner` config to `task-planner`
+and keeps its model. Restart OpenCode after changing agent definitions or config.
 
 ## Install
 
@@ -163,7 +182,7 @@ markdown file per short name, linked into each harness's command directory.
 
 ```bash
 mkdir -p ~/.claude/commands ~/.config/opencode/command
-for f in "$PWD"/commands/*.md; do                      # /task, /retro, /learn
+for f in "$PWD"/commands/*.md; do                      # /task, /retro, /learn, /autopilot
   n=$(basename "$f")
   ln -sf "$f" "$HOME/.claude/commands/$n"              # Claude Code
   ln -sf "$f" "$HOME/.config/opencode/command/$n"      # OpenCode
@@ -246,8 +265,11 @@ To register one MCP that selects its settings from the active agterm workspace:
 harness/opencode/install.sh --workspace-mcp <server-name>
 ```
 
-The helper reads `~/.agents/skills/<workspace>/<server-name>/opencode.json`.
-Each private project supplies an OpenCode `mcp` object with a local server command.
+The helper reads `opencode.mcp.<server-name>` of the workspace's local `.workspace/workspace.json`:
+the `.workspace/` above a session of that agterm workspace whose `settings.json` names it
+(`agterm_workspace`). Without that entry it reads `~/.agents/skills/<workspace>/<server-name>/opencode.json`
+(key `mcp.<server-name>`) from the workspace's private skills. Either holds an OpenCode `mcp`
+object with a local server command.
 Use separate `MCP_REMOTE_CONFIG_DIR` values for accounts that share a remote URL.
 The helper expands `{env:NAME}` in the server's environment and uses the workspace,
 never the current folder. An unknown workspace stops instead of using another account.
@@ -300,7 +322,10 @@ skill saying "fan out" does.
 scans `~/.claude/agents` recursively and takes a subagent's identity from the frontmatter
 `name`, OpenCode scans `{agent,agents}/**/*.md` and takes it from the filename. Keep the two
 equal and the id is the same in both — `agents/code-reviewer/quality.md` with `name:
-quality` is the agent `quality`. The folder groups them for humans and never enters the id.
+quality` is the agent `quality`. The folder groups them for humans and never enters the id. `agents/autopilot/` holds the
+roles of an autopilot run (`planner`, `qa-plan`, `implementer`, `qa-verify`, `reviewer`); the
+`sadensmol-autopilot` skill starts them. The `~/.claude/agents` link in *Install* already
+covers them, so installing them needs no extra step.
 
 Codex is the exception: a custom agent there is a TOML file in `~/.codex/agents/` with
 `name`, `description` and `developer_instructions`, so the markdown cannot simply be linked.
@@ -372,9 +397,20 @@ Five rules, each of them load-bearing:
 - **Say what not to do before the skill loads.** A command is text the model may act on
   directly; without that line it will happily start the work itself and skip the skill.
 - **Do not claim a name another namespace owns.** `/task` is safe because
-  `sadensmol-task` is the dispatcher that resolves the project. A `/linear` or `/router`
+  `sadensmol-task` is the dispatcher that resolves the workspace. A `/linear` or `/router`
   alias would hard-code one namespace's answer to a name three plugins define, which is
   what the router's disambiguation rules exist to decide per session.
+
+### Namespace commands
+
+`/<namespace>` lists the commands of one skill namespace, and `/<namespace> <command> [args]`
+runs the skill `<namespace>-<command>`, never one from another namespace. `commands/sadensmol.md`
+is the one for this repository; each private namespace repository carries its own
+`commands/<namespace>.md` with the same body. All of them call
+`skills/general/scripts/list-commands.py`, which reads the installed `SKILL.md` frontmatter:
+a skill counts unless it says `user-invocable: false`, so a new skill needs no edit anywhere.
+In Claude Code the `sadensmol` skill answers `/sadensmol`; `commands/sadensmol.md` still
+serves Codex and OpenCode, so it stays.
 
 ## Refresh
 
@@ -449,11 +485,14 @@ the full check list: [test/README.md](test/README.md).
 ## Rules for this repo
 
 This repository is **public**. Every file must be usable by a stranger who has none of my
-projects, machines or accounts.
+workspaces, machines or accounts.
 
 - No secrets. Reference them by environment variable name only.
 - No local paths (`/Users/…`, `/home/…`, `~/work/…`). Derive paths at runtime or ask.
-- No project-specific knowledge — that lives in private namespace repos of the same shape.
+- No workspace-specific knowledge, the author's own workspace included — it lives in the
+  workspace's local registry (`.workspace/settings.json`, `.workspace/projects/`) or in private namespace repos of the same shape.
+- No secrets, settings, MCP server names, emails or names of people: they live in the local
+  `.workspace/` folder of the workspace, never in this repository.
 - Keep `SKILL.md` under ~500 lines. Move detail into `references/`.
 - Write a trigger-rich `description`: it is the only thing an agent sees until the skill loads.
 

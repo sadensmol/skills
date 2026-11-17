@@ -37,8 +37,7 @@ case "$cwd" in
     ;;
   *) base="$cwd"; branch="$(basename "$cwd")" ;;
 esac
-task_id="$(printf '%s' "$branch" | grep -oiE '^[a-z]+-[0-9]+' | tr '[:lower:]' '[:upper:]')"
-name="review ${task_id:-$branch}"
+name="review"
 
 lock="$base/.scratch/plannotator.lock"
 

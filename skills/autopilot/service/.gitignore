@@ -1,0 +1,8 @@
+.env
+*.env
+auth.json
+secrets*
+.claude/settings.local.json
+.scratch/
+.superpowers/
+bin/

@@ -29,7 +29,7 @@ Notes on the shape:
 - An item is either `quantity` × `unit_price`, or a flat `{"description", "amount"}`.
 - `payment.bank` is a free-form ordered map — whatever labels the data source uses
   (`IBAN`, `SWIFT`, `Intermediary bank`, …) render as given, in order. This is how a
-  project supplies correspondent/intermediary banks without a schema change. JSON cannot
+  workspace supplies correspondent/intermediary banks without a schema change. JSON cannot
   repeat a key, so a second row with the same label is written `Intermediary bank #2`;
   the renderer strips a trailing `#N` so both print identically.
 - `tax` and `discount` are omitted entirely when they do not apply. A zero-rate line

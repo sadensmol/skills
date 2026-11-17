@@ -3,16 +3,16 @@
 **Triggers:** a bare `/task` with no arguments, "task help", "task --help", "what can
 task do".
 
-`help` lists every subcommand that works in the current project, with a one-line
+`help` lists every subcommand that works in the current workspace, with a one-line
 explanation each. It answers in chat, changes nothing, and runs no subcommand. It never
 falls through to `new`.
 
-## 1. Resolve the project and the context
+## 1. Resolve the workspace and the context
 
-Run Steps 1–2 of `SKILL.md`. No project resolves → show only the *Generic* table below,
-and say that `new`, `plan`, `finish`, `cleanup` and `pull` need a project workspace.
+Run Steps 1–2 of `SKILL.md`. No workspace resolves → show only the *Generic* table below,
+and say that `new`, `plan`, `finish`, `cleanup` and `pull` need a known workspace.
 
-With a project, load `<project>-task` (do not reload it when its instructions are in
+With a workspace, load `<workspace>-task` (do not reload it when its instructions are in
 context) and read its `## Subcommands` section: the delegated subcommands it supports,
 their aliases (e.g. `cleanup` / `delete`), and any subcommand it adds.
 
@@ -32,16 +32,16 @@ One context line, then one table. Mark a row `(needs a worktree)` when the sessi
 in one, and leave out nothing.
 
 ```
-Project: <project> · <worktree <branch>, <PLAN|IMPL>, <pair|single> | not in a task worktree>
+Workspace: <workspace> · <worktree <branch>, <PLAN|IMPL>, <pair|single> | not in a task worktree>
 ```
 
 | Command | What it does |
 |---|---|
 | … | … |
 
-Take the delegated rows from the project skill, in its table order, and say in each
-row what that project's version does (e.g. its `pull` repo set). Then add the *Generic*
-rows below, unchanged. Add a project-only subcommand at the end.
+Take the delegated rows from the workspace skill, in its table order, and say in each
+row what that workspace's version does (e.g. its `pull` repo set). Then add the *Generic*
+rows below, unchanged. Add a workspace-only subcommand at the end.
 
 ### Generic rows (this dispatcher)
 
@@ -55,7 +55,7 @@ rows below, unchanged. Add a project-only subcommand at the end.
 | `reviewd` | Shows every logged decision, so you can keep, change or revert it |
 | `reviewq` | Shows every question of the task and its answer, so you can comment |
 | `status [--all]` | Where this task stands: phase, PRs, CI, what blocks `finish`; `--all` for every task |
-| `list` | Lists the task worktrees of the project |
+| `list` | Lists the task worktrees of the workspace |
 | `switch <branch> [--pair\|--single]` | Selects that task's session, opening it if needed |
 | `pair` | Continues the current task in pair mode (writer + reviewer) |
 | `fresh [--then …]` | Restarts the task sessions with a clean context |
@@ -64,5 +64,5 @@ rows below, unchanged. Add a project-only subcommand at the end.
 | `cleanup` | Removes the task worktrees and sessions after the merge (delegated) |
 | `pull` | Puts the project checkouts on their default branch (delegated) |
 
-Drop a delegated generic row when the project skill does not support it. End with one
+Drop a delegated generic row when the workspace skill does not support it. End with one
 line: "Run `/task <command>`." Nothing else.

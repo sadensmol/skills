@@ -28,7 +28,7 @@ these are the most expensive patterns to reverse.
   let a lower layer import a higher one. Both defeat the whole point.
 - **Watch:** if a layer only forwards calls with no logic, it is a pass-through
   tax — either give it a job or remove it. That judgement is per-project; follow
-  the surrounding code and the project skill.
+  the surrounding code and the workspace skill.
 
 ### Hexagonal / ports and adapters
 

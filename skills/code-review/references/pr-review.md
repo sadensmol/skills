@@ -32,9 +32,9 @@ Run `filesCmd` once yourself to derive the skill list, and grab the commit list
 (`gh pr view <pr> --json commits`) for context. Do **not** read the full diff into your
 own context.
 
-### 4. Ensure the PR title + description follow project conventions
+### 4. Ensure the PR title + description follow workspace conventions
 
-First apply the project's own rules (see **Project PR conventions**): verify the **PR title** matches the project's format (issue-key/type prefix) and fix it via `gh pr edit <pr> --title ...` if it doesn't; structure the **description** the way the project's skill prescribes. Only when the project defines no description convention, fall back to the generic shape below.
+First apply the workspace's own rules (see **Workspace PR conventions**): verify the **PR title** matches the workspace's format (issue-key/type prefix) and fix it via `gh pr edit <pr> --title ...` if it doesn't; structure the **description** the way the workspace's skill prescribes. Only when the workspace defines no description convention, fall back to the generic shape below.
 
 The PR description must reflect **the idea of the PR** — what it changes, what feature it implements, or what bug it fixes — plus a short bullet list of the top-level changes (code, architecture, design, etc.).
 

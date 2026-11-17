@@ -1,6 +1,6 @@
 ---
 name: sadensmol-invoice
-description: "Generate an invoice as a PDF — build the payload, compute the totals, render the document. Use when the user asks to create/make/generate/issue an invoice or a bill, to invoice a client for a month or a period, to re-issue or amend an invoice, or to produce a proforma/credit note. Resolves WHOSE data to use from the active workspace: a `<project>-invoice` skill owns that project's billing data and always wins; a plain personal session falls back to the local profile. Owns the mechanics (payload schema, numbering, money math, rendering, output location) and never holds anyone's real billing data."
+description: "Generate an invoice as a PDF — build the payload, compute the totals, render the document. Use when the user asks to create/make/generate/issue an invoice or a bill, to invoice a client for a month or a period, to re-issue or amend an invoice, or to produce a proforma/credit note. Resolves WHOSE data to use from the active workspace: a `<workspace>-invoice` skill owns that workspace's billing data and always wins; a plain personal session falls back to the local profile. Owns the mechanics (payload schema, numbering, money math, rendering, output location) and never holds anyone's real billing data."
 ---
 
 # Invoice
@@ -33,27 +33,27 @@ pwd
 ```
 
 The **agterm workspace name is authoritative** when present — a session lives under a
-workspace named after its project, and that stays right even when the cwd has wandered
+workspace named after it, and that stays right even when the cwd has wandered
 into a skills checkout or a worktree. The cwd is the fallback: normalise it
 (`pwd | sed 's|/work_|/|g'`) and match it against the local routes file
 (`~/.agents/sadensmol-router-routes.json`, or `~/.claude/sadensmol-router-routes.json`)
-whose entries are `{ "cwd": "<substring>", "skill": "<project>-<name>" }`. The skill-id
-prefix before the first `-` is `<project>`.
+whose entries are `{ "cwd": "<substring>", "skill": "<workspace>-<name>" }`. The skill-id
+prefix before the first `-` is `<workspace>`.
 
 Then, in order:
 
-1. **A `<project>-invoice` skill exists → load it and use ITS data, always.** Working in
-   a project's workspace means invoicing that project. Its skill carries the issuer, the
+1. **A `<workspace>-invoice` skill exists → load it and use ITS data, always.** Working in
+   a workspace means invoicing for that workspace. Its skill carries the issuer, the
    client, the bank details, the default line items, the currency and the numbering
-   series. **Project data wins over anything in this file, over the personal profile, and
+   series. **Workspace data wins over anything in this file, over the personal profile, and
    over what you remember from an earlier session.**
-2. **No project invoice skill → the personal profile.** Read
+2. **No workspace invoice skill → the personal profile.** Read
    `~/.agents/sadensmol-invoice.json` (fallback `~/.claude/sadensmol-invoice.json`) — a
    local, unpublished file holding the same fields. Absent → go to 3.
 3. **Nothing resolves → ASK the user**, once, for the missing fields (§2). Offer to save
    the stable ones into the personal profile so the next invoice needs no questions.
 
-**Never mix sources.** Do not take the issuer from a project skill and the bank details
+**Never mix sources.** Do not take the issuer from a workspace skill and the bank details
 from the personal profile because one of them looked incomplete. Say which source is
 short and ask.
 
@@ -164,5 +164,5 @@ series), so a duplicate is caught immediately.
   your own initiative, and never treat "generate the invoice" as authorisation to deliver
   it.
 - **Real billing data never enters this skill, its scripts, or any public repository.** It
-  lives in the project skill or the local personal profile. If you find yourself about to
+  lives in the workspace skill or the local personal profile. If you find yourself about to
   write an IBAN or a tax id into an example here, stop.

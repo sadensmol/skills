@@ -1,21 +1,32 @@
 ---
 name: sadensmol-task
-description: "Task/worktree management entry point: dispatches `/task SUBCOMMAND` to the project's `PROJECT-task` skill by agterm workspace or cwd, and runs the project-agnostic subcommands itself. Use when the user says: \"task new BRANCH\", \"new task\", \"task plan\", \"task list\", \"task status\", \"task switch\", \"task switch --pair\", \"task switch --single\", \"task pair\", \"task fresh\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task reviewd\", \"review decisions\", \"task reviewq\", \"review questions\", \"task reviews\", \"review the plan steps\", \"task finish\", \"task cleanup\", \"task pull\", \"create worktree\", \"task help\", or a bare \"/task\" or \"/task …\"."
+description: "Task/worktree management entry point: dispatches `/task SUBCOMMAND` to the workspace's `WORKSPACE-task` skill by agterm workspace or cwd, and runs the workspace-agnostic subcommands itself. Use when the user says: \"task new BRANCH\", \"new task\", \"task plan\", \"task list\", \"task status\", \"task switch\", \"task switch --pair\", \"task switch --single\", \"task pair\", \"task fresh\", \"task changes\", \"show changes\", \"task zed\", \"task code\", \"task console\", \"task review\", \"task reviewd\", \"review decisions\", \"task reviewq\", \"review questions\", \"task reviews\", \"review the plan steps\", \"task finish\", \"task cleanup\", \"task pull\", \"create worktree\", \"task help\", or a bare \"/task\" or \"/task …\"."
 ---
 
 # Task (dispatcher)
 
-`/task` is the single visible task entry across the personal plugins. Each project's
-`<project>-task` skill is hidden from the `/` menu (`user-invocable: false`) and is
+`/task` is the single visible task entry across the personal plugins. Each workspace's
+`<workspace>-task` skill is hidden from the `/` menu (`user-invocable: false`) and is
 reached through this dispatcher, or loaded directly through `load-skill`.
 
-**This skill knows nothing about any specific project (MUST FOLLOW).** No project, repo,
-workspace, path, tracker or issue prefix appears here. It resolves everything at runtime,
-handles its own subcommands from the cwd alone, and passes anything that needs repository
-knowledge down to the project skill. Logic that special-cases a project belongs in that
-project's plugin.
+**This skill holds the default task flow and knows no workspace (MUST FOLLOW).**
+The default flow lives here: `## Subcommands`, `references/defaults/` and the
+`scripts/` it names. It serves any workspace with no `<workspace>-task` skill, with the names
+of that workspace's registry (`.workspace/settings.json` and `.workspace/projects/<project>.json`). No workspace, repo, path, tracker or
+issue prefix appears here. It resolves everything at runtime, handles its own subcommands from the cwd
+alone, and passes anything that needs repository knowledge down to the workspace skill.
+Logic that special-cases another workspace belongs in that workspace's plugin.
 
-## Step 1 — detect the project (the agterm workspace decides first)
+## Workflow identity (MUST FOLLOW)
+
+`/task` and its workspace scripts run the task flow. They never run Autopilot missions.
+Keep this identity in every subagent brief. Use `planner-subagent` for task plans and
+never select an `autopilot-*` agent. Autopilot's service, QA manifests, engine waves and
+result-file protocol are not task prerequisites. Permission flags and autonomous work
+do not change the workflow. A role mismatch is a harness installation fault, not a reason
+to ask the user for a fallback agent or to skip a task gate.
+
+## Step 1 — detect the workspace (the agterm workspace decides first)
 
 ```bash
 echo "--- agterm workspace ---"
@@ -28,30 +39,36 @@ echo "--- cwd ---"; pwd
 ```
 
 The workspace name, when present, is authoritative: a session lives under a workspace
-named after its project, which stays right even when the cwd wandered (for example into
-a `work_<project>` skill-source checkout).
+named after it, which stays right even when the cwd wandered (for example into
+a `work_<workspace>` skill-source checkout).
 
-## Step 2 — resolve to a project skill
+## Step 2 — resolve to a workspace skill
 
-You need the plugin namespace `<project>`, which gives `<project>-task`. In order:
+You need the plugin namespace `<workspace>`, which gives `<workspace>-task`. In order:
 
-1. **agterm workspace name** → `<name>-task` directly. When that is this dispatcher
-   itself (workspace `sadensmol`), use `work-<name>-task` — the private company plugin
-   whose namespace cannot reuse the base prefix.
+1. **agterm workspace name** → `<name>-task` directly, when that skill is installed. When it
+   is not installed (or it is this dispatcher itself), the workspace uses the **default flow**:
+   run the delegated subcommands here, from `## Subcommands`, and load no other task skill.
+   The default flow needs the registry: no `.workspace/settings.json` above the cwd → stop,
+   name the file.
 2. **cwd, via the local, unpublished routes file** (when the workspace is `(unknown)` or
    `(not in agterm)`):
 
    ```bash
-   pwd | sed 's|/work_|/|g'                          # normalize a work_<project> skill-source checkout
+   pwd | sed 's|/work_|/|g'                          # normalize a work_<workspace> skill-source checkout
    cat ~/.agents/sadensmol-router-routes.json 2>/dev/null || cat ~/.claude/sadensmol-router-routes.json 2>/dev/null
    ```
 
    A JSON array of `{ "cwd": "<substring>", "skill": "<plugin>:<skill>" }`. Take the entry
-   whose `cwd` appears in the normalized path; the part before `:` is `<project>`.
+   whose `cwd` appears in the normalized path; the part before `:` is `<workspace>`. When
+   several entries match, a route to a workspace skill (a namespace other than `sadensmol`)
+   always beats a route to a `sadensmol-*` skill, so drop those. Of the entries left, the
+   longest `cwd` (the most specific match) wins.
 3. **No match → stop.** A personal session, an unknown workspace, a namespace with no
    `-task` skill, or a route that resolves to `sadensmol` itself (this dispatcher — you
-   would loop) all mean: `/task` needs a project workspace. Say so and ask which project;
-   never guess.
+   would loop) all mean: `/task` needs a known workspace. Say so and ask which workspace;
+   never guess. The one exception is a folder with a registry `.workspace/settings.json`
+   above the cwd and no workspace route: it uses the default flow, as in rule 1.
 
 ## Step 3 — handle here, or delegate
 
@@ -71,28 +88,52 @@ You need the plugin namespace `<project>`, which gives `<project>-task`. In orde
 | `fresh` | `references/fresh.md` |
 
 **`switch` picks an existing worktree, not a session.** It selects the worktree's live
-session, or opens one first with the project's `new-task.sh <branch> --open`. It never does
+session, or opens one first with the workspace's `new-task.sh <branch> --open`. It never does
 git work or setup, so never delegate it to `new`. Follow `references/status.md` → *`switch`*.
 
-**Delegated:** `new`, `plan`, `finish`, `cleanup`, `pull`. Ensure the resolved `<project>-task`
+**Delegated:** `new`, `plan`, `finish`, `cleanup`, `pull`. Ensure the resolved `<workspace>-task`
 skill is loaded (do not reload it when its full instructions are already in context) and
 apply the user's **full argument string verbatim** as its args:
 
-- `/task new ABC-1 ABC-2` → `<project>-task` with args `new ABC-1 ABC-2`
+- `/task new ABC-1 ABC-2` → `<workspace>-task` with args `new ABC-1 ABC-2`
 - `/task finish` → args `finish`. A bare `/task` is never delegated: it is `help`.
 
-Never re-interpret, expand or run a delegated subcommand yourself.
+Never re-interpret, expand or run a delegated subcommand yourself. The one exception is
+the default flow (a workspace with no `<workspace>-task` skill, rule 1 or 3 of Step 2): there
+this skill runs them itself, from `## Subcommands` and `references/defaults/`, with the
+same full argument string.
 
 A base on `new` is forwarded verbatim, never interpreted; an issue-tracker URL as the
 branch becomes the tracker's real branch name. Before you forward `new` or `plan`, read
 `references/delegation.md`.
 
-**Shared phase references for project skills.** A project's `new` / `plan` / `finish` /
+**Shared phase references for workspace skills.** A workspace's `new` / `plan` / `finish` /
 `cleanup` reads the matching shared file in this skill's directory and adds its own
 hooks: `references/new.md`, `references/plan.md`, `references/finish.md`,
-`references/cleanup.md`. A project skill whose scripts need agterm starts every
+`references/cleanup.md`. A workspace skill whose scripts need agterm starts every
 subcommand with this pre-flight: `[ -n "${AGTERM_ENABLED:-}" ]`, otherwise tell the user
 "You need to run Claude inside agterm first." and stop.
+
+## Subcommands
+
+The delegated subcommands of the default flow (Step 2, rules 1 and 3). For a workspace with no
+`<workspace>-task` skill, this table takes the place of the workspace skill: run each row here, with the user's full argument
+string. First read `references/defaults/project.md` (projects, layout, tracker, project
+rules, definition of done). Every subcommand starts with the agterm pre-flight of Step 3.
+
+| Subcommand | Read now, in order |
+|---|---|
+| `new <branch>` / `<branch>` | `references/new.md`, then `references/defaults/new.md` |
+| `plan` | `references/plan.md`, then `references/defaults/plan.md` |
+| `finish` | `references/finish.md`, then `references/defaults/finish.md` |
+| `cleanup` / `delete` | `references/cleanup.md`, then `references/defaults/cleanup.md` |
+| `pull` | nothing — run `bash <sadensmol-task-skill-dir>/scripts/pull-main.sh` and report its output |
+
+`pull` fast-forwards every project checkout in the workspace folder to `origin/main`. From
+a task worktree it exits with an error — report it and stop. A repo off `main`, or one that
+cannot fast-forward, is listed as `FAILED` (exit 2); never force it.
+
+A bare `<branch>` (or a `<KEY>-<n>` issue key / Linear issue URL) means `new`.
 
 ## Worktree helpers
 
@@ -110,6 +151,8 @@ rule is `references/pair-mode.md` → *Pair programming*.
 
 The protocol is `pair.md` (each agent gets its path in its start brief). Mode question,
 mode switches and `pair.py` mechanics: `references/pair-mode.md` and `references/new.md`.
+Before creating a new task, ask for Single or Pair unless the user explicitly chose one
+(`references/new.md` → *Mode*). This setup gate precedes the task's *Autonomy* rules.
 
 ## Session branches — every parallel unit of work runs in a branch (MUST FOLLOW)
 
@@ -328,6 +371,12 @@ This covers a direct answer, a pair joint answer, and a report from a branch
 (`<task-notification>`). A reply that answers several questions quotes each one before
 its own answer.
 
+- **The answer text is in this chat reply.** A message to the pair peer (`FYI:`,
+  `DECISION:`) or a Q&A log entry never replaces it. A reply of only `Logged.` or "I sent
+  this answer to the reviewer" is no answer: the user cannot see the peer or the log.
+- **Plain words in chat.** Never use a plan item id (`S3`, `M4`, `U18`, `Q8`) alone. Say
+  what the item is in plain words; the id may follow in parentheses.
+
 ## Never move the user's focus unless asked (MUST FOLLOW)
 
 **Explicit `switch` is the exception:** select the task session as requested, and open it
@@ -337,11 +386,11 @@ Every agterm session a task flow opens (task, single-mode, pair respawn, console
 test run, plannotator) is created with `agtermctl session new … --no-select`, so it
 opens in the background. Never pass `--follow`, and never run `session select` /
 `session go` / `workspace select` on it. When the session already exists, reuse it and
-leave it unselected. This binds every project's `<project>-task` script too.
+leave it unselected. This binds every workspace's `<workspace>-task` script too.
 
 ## Every extra session is a companion (MUST FOLLOW)
 
-Only the task session itself is a top-level session: the project's `new-task.sh` and
+Only the task session itself is a top-level session: the workspace's `new-task.sh` and
 `pair.py respawn` open it. Every other session a task flow opens (test run, infra, review,
 console, any later helper) is a companion of the task session. Open it only through
 `<sadensmol-task-skill-dir>/scripts/child-session.sh`. This binds plans, runner briefs and
@@ -350,6 +399,9 @@ shell, and agterm creates it from the page.
 
 - Never call `agtermctl session new` for it directly.
 - Never pass `--after` for it, and never write `└─` or `├─` into a session name.
+- Name it by what it runs only (`infra api`, `test core`, `review`). The sidebar shows it
+  under the task session, so never repeat the task id, the branch or any part of the
+  parent's name in it.
 - There is no fallback. If the helper fails, stop and report the error.
 
 ## Show the user anything in a page companion (MUST FOLLOW)
@@ -384,7 +436,8 @@ stops a stack or touches the lock.
 ## Plannotator binary (shared)
 
 Every `plannotator …` launch — `review`, `annotate`, `annotate PLAN.md --gate` — goes
-through the helper, **in the background** (`run-background-shell`) (MUST FOLLOW):
+through the helper with a completion path back to the main session (MUST FOLLOW).
+Use a notifying background run, or the runner fallback in `references/plannotator.md`:
 
 ```bash
 cd <worktree-base> && bash <sadensmol-task-skill-dir>/scripts/plannotator-session.sh <plannotator args…>
@@ -403,14 +456,14 @@ block, read `references/mermaid.md` and validate every block.
 
 ## Test scope — targeted while working, full suite in CI at `finish` (MUST FOLLOW)
 
-This overrides any project wording that asks for the whole suite earlier.
+This overrides any workspace skill wording that asks for the whole suite earlier.
 
 - While the functionality is in progress (coding, iterating, fixing a finding, reworking
   after `review`), run **only** the tests that cover the code you change — the test file,
   package, suite or `-run`/`--name` filter, plus direct callers. A full-repo run here is
   waste; do not ask the operator to stage shared infra for it.
 - The full suite runs only after the user says `task finish`, in each PR's CI (every
-  changed repo: unit, integration, frontend, e2e — whatever the project lists). Locally
+  changed repo: unit, integration, frontend, e2e — whatever the workspace skill lists). Locally
   `finish` runs build, lint and the changed packages' suites (`references/finish.md` §4).
 - `review` needs only the targeted tests for the changed behaviour to be green.
 - "Never commit red" is enforced at `finish`. In-progress code may leave untouched parts
@@ -422,7 +475,9 @@ This overrides any project wording that asks for the whole suite earlier.
 
 - Capture each test session id. Read and save its result, then close a successful session
   at once: `agtermctl session close --target <id>`. Pass `--socket "$AGTERM_SOCKET"` when set.
-- Keep a failed session open only while it helps the diagnosis. Name its id in the report.
+- Keep a failed session open only while it helps the diagnosis. Name it in the report as a
+  session link, `[<session name>](agterm://session/<id>)`, so a ⌘-click opens it
+  (`sadensmol-agterm` → *Session links*).
 - Before you retry that run, save the failure output you need and close the old failed or
   broken session. After `RED`, the main session closes it before it starts the new runner.
   Start the retry as a fresh attempt.
@@ -481,9 +536,27 @@ expected.
 **Stop only at the three points of *Autonomy*.** Then report the finished result, not a
 mid-way status.
 
+### Approval resumes work automatically (MUST FOLLOW)
+
+An explicit plan approval is an instruction to implement, not a status to acknowledge.
+Consume the gate result and start the approved work in the same continuation. Never end
+with only "approved", "I see it", or "ready to implement". Do not require a second command.
+Complete implementation, targeted checks, and pre-PR preparation; then open the diff gate.
+The plan approval does not authorize a commit, push, PR, merge, or production action.
+
+Keep a live completion path for every user gate (`references/plannotator.md`). A log file
+without a notifier or an active runner does not monitor approval. Before going idle after
+a side request, consume any completed gate result and resume the active task.
+A question about progress needs a short answer, then continued work. It does not cancel
+the task. Only an explicit pause, cancellation, or incompatible replacement stops it.
+
+Resolve routine choices from the ticket, code, conventions, and approved scope. A heading
+called "Questions to clarify" does not itself make a choice critical. Ask only questions
+that still meet *Autonomy*, and continue independent approved work while they remain open.
+
 ## Guards — skip only with `ask-user` permission (MUST FOLLOW)
 
-A guard is any gate or MUST rule the task skills state (the project skill names its own:
+A guard is any gate or MUST rule the task skills state (the workspace skill names its own:
 merge conditions, required checks, e2e gates, review approval, ...).
 
 **A guard that does not apply is not a skip — decide it alone (MUST FOLLOW).** When the
@@ -526,7 +599,7 @@ mode is Local: do not ask the mode. Never run it at another time: not after each
 not when tests go green, not on pair agreement. There, **fix every P0 and every P1**; report every P2
 and fix it only when it is critical or trivially easy; say which P2s you fixed and which
 you left. Re-run until no P0/P1 remains. Green tests, a clean plannotator review, or an
-agentic PR review never replace it. Each project's `finish` places this gate.
+agentic PR review never replace it. Each workspace's `finish` places this gate.
 
 ## Docs — once, at the end (MUST FOLLOW)
 
@@ -537,7 +610,7 @@ merge: `references/finish.md` → §6a. No merge and no `cleanup` before it is d
 
 Never end `review`, `changes`, `status` or `finish` by proposing `cleanup` (or "remove the
 worktree?"). Mention it only when every PR of the branch is **merged** (not just
-approved), the project's definition-of-done gates are green (for example an e2e PR and its
+approved), the workspace's definition-of-done gates are green (for example an e2e PR and its
 regression run), and no work is left — or when the user asks. Otherwise the next step is
 `finish` or more work. An operator-accepted final state with failed or bypassed checks is
 reported as complete with accepted exceptions, and cleanup as `force required`.
@@ -551,7 +624,7 @@ you write, review or answer. The summary in this skill is not the full rule.
 |---|---|
 | A handled-here subcommand runs | its file in the Step 3 table |
 | You forward `new` or `plan` | `references/delegation.md` |
-| A project's `new` / `plan` / `finish` / `cleanup` runs | `references/new.md`, `plan.md`, `finish.md`, `cleanup.md` |
+| A workspace's `new` / `plan` / `finish` / `cleanup` runs | `references/new.md`, `plan.md`, `finish.md`, `cleanup.md` |
 | You need `$root`, `$branch`, `$base`, `$WT` or `real_changes` | `references/worktree-helpers.md` |
 | You spawn a session branch or merge one back | `references/session-branches.md` |
 | You change the task stage | `references/stages.md` |
@@ -559,4 +632,4 @@ you write, review or answer. The summary in this skill is not the full rule.
 | You launch plannotator, edit a `.md` that an open `annotate` shows, or generate a page for it (theme) | `references/plannotator.md` |
 | You start a local stack | `references/infra.md` |
 | A `.md` with a mermaid block goes to plannotator, a hand-over or a commit | `references/mermaid.md` |
-| You add a new project | `references/adding-a-project.md` |
+| You add a new workspace | `references/adding-a-workspace.md` |

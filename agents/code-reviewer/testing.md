@@ -7,7 +7,7 @@ effort: high
 
 Review test coverage and quality.
 
-## Load project skills first (before reviewing)
+## Load the skills first (before reviewing)
 
 Your dispatch prompt names the skills to load. **Load exactly those, with your harness's skill tool, before you judge a single line** — their rules decide whether a finding is even
 valid (Go's default is NO comment, so "add a doc comment" is usually the WRONG
@@ -20,8 +20,8 @@ diff routinely spans several languages and the cwd is only one of them): `*.go` 
 `*.dart` → `sadensmol-programming-flutter` + `sadensmol-programming-dart`; `*.ts`/`*.tsx`
 → `sadensmol-programming-typescript`; `*.swift` → `sadensmol-programming-swift`; `*.py` → `sadensmol-programming-python`; any
 language → `sadensmol-programming` too. Then
-also invoke `sadensmol-router` and any project router whose cwd matches
-(`<project>-router`). Skip skills already loaded.
+also invoke `sadensmol-router` and any workspace router whose cwd matches
+(`<workspace>-router`). Skip skills already loaded.
 
 Because you review tests, you also need the stack's testing skill — for Go,
 `sadensmol-programming-go` → `references/integration-tests.md`. Read it and use it to judge suite structure, fixtures, mocking, and

@@ -163,7 +163,8 @@ cd <worktree-base> && bash "$S" delta
   change nobody asked for). `overview`: 2–6 sentences of markdown on what was wrong,
   what changed and why. Paths exactly as the `--stat` prints them; every delta file in
   exactly one section. `guide` refuses a missing, extra or duplicated file — fix the
-  JSON, never drop a file to make it pass. Launch with `PLANNOTATOR_GUIDE` (see *Launch*).
+  JSON, never drop a file to make it pass. A plan delta holds only `PLAN.md`: write one
+  section with it, and list each reason in that section's `overview`. Launch with `PLANNOTATOR_GUIDE` (see *Launch*).
 - Post in chat, before the launch, a short text summary (one line per section: its
   title and reason) and this notice:
 

@@ -8,7 +8,7 @@
 #   run-tests.sh [<repo-src> [<supporting-repo-src> …]]     default: /src
 #
 # The first path is the repository under test. Any further paths are installed
-# alongside it — that is how a project repository is checked together with the
+# alongside it — that is how a workspace repository is checked together with the
 # base namespace it layers on. If /home/agent/test-extra/project-checks.sh
 # exists it is sourced at the end, so a repository can add its own assertions
 # without copying this file.
@@ -88,12 +88,12 @@ done
 claude plugin list > /tmp/plugins.txt 2>&1
 assert_has /tmp/plugins.txt "$NS@$NS" "plugin $NS@$NS is installed"
 
-# A project repository's hook injects only for a session it recognises, so feed it the
+# A workspace repository's hook injects only for a session it recognises, so feed it the
 # hook JSON of a session sitting in this repository.
 hook_in() { printf '{"cwd":"%s"}' "$REPO"; }
 hook_in | CLAUDE_PLUGIN_ROOT="$REPO/plugin" "$REPO/plugin/hooks/skill-activation.sh" > /tmp/hook.txt 2>&1
 assert_has /tmp/hook.txt "name: $NS-router" "UserPromptSubmit hook injects the router"
-# Only the repository that ships the runtime contract injects it; a project
+# Only the repository that ships the runtime contract injects it; a workspace
 # repository layering on a base deliberately leaves that to the base's hook.
 [ -f "$REPO/harness/claude-code.md" ] \
   && assert_has /tmp/hook.txt "Runtime: Claude Code" "hook also injects harness/claude-code.md"
@@ -128,6 +128,17 @@ opencode debug config > /tmp/oc-config.json 2>/dev/null
 jq -r '.instructions[]?' /tmp/oc-config.json > /tmp/oc-instructions.txt
 assert_has /tmp/oc-instructions.txt "/router/SKILL.md" "router is in opencode instructions"
 assert_has /tmp/oc-instructions.txt "harness/opencode.md" "harness/opencode.md is in opencode instructions"
+
+if [ -f "$AGENTS_REPO/agents/task/task-planner.md" ]; then
+  for name in task-planner autopilot-planner autopilot-implementer autopilot-qa-plan autopilot-qa-verify autopilot-reviewer; do
+    opencode debug agent "$name" > /tmp/oc-agent.json 2>/dev/null
+    if jq -e --arg name "$name" '.name == $name and .mode == "subagent"' /tmp/oc-agent.json >/dev/null; then
+      ok "OpenCode resolves the distinct $name role"
+    else
+      bad "OpenCode resolves the distinct $name role"
+    fi
+  done
+fi
 
 # The config merge has its own hermetic checks — each one runs the installer
 # against a throwaway HOME, so none of them touch the config installed above.
@@ -200,7 +211,7 @@ fi
 group "Validity"
 
 skills add "$REPO/skills" --list 2>&1 | sed -r 's/\x1B\[[0-9;?]*[a-zA-Z]//g' > /tmp/skills-list.txt
-listed="$(awk '{gsub(/^[^a-z]*/, ""); if (NF==1 && $0 ~ /^[a-z0-9]+(-[a-z0-9]+)+$/) print}' /tmp/skills-list.txt | sort -u | wc -l)"
+listed="$(awk '{gsub(/^[^a-z]*/, ""); if (NF==1 && $0 ~ /^[a-z0-9]+(-[a-z0-9]+)*$/) print}' /tmp/skills-list.txt | sort -u | wc -l)"
 [ "$listed" -eq "${#SKILL_DIRS[@]}" ] \
   && ok "skills CLI lists all ${#SKILL_DIRS[@]} (frontmatter parses)" \
   || bad "skills CLI lists all ${#SKILL_DIRS[@]}" "listed $listed — a skipped skill has broken YAML; see /tmp/skills-list.txt"

@@ -19,7 +19,7 @@ and holds a reply key. Keep the key to yourself.
 
 ## Your part of the decision
 
-1. **Your own view, blind.** Research the code and the rules: the project skill and its
+1. **Your own view, blind.** Research the code and the rules: the workspace skill and the
    `CLAUDE.md` conventions (layering, package layout, test policy), and existing code
    that already does the job. Write your view to
    `<base>/.pair/files/view-<topic>-reviewer.md`: what to do, where (files and symbols),

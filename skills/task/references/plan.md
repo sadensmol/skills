@@ -1,8 +1,8 @@
-# `plan` — shared flow (the project skill supplies the tracker steps)
+# `plan` — shared flow (the workspace skill supplies the tracker steps)
 
 **Triggers:** "task plan", "plan task", "start plan". `new` auto-starts it in a fresh
 worktree; it also runs manually from inside a worktree. These rules bind every
-project, including new ones.
+workspace, including new ones.
 
 **OpenCode mode:** Start and run this flow in the write-enabled `task` mode, including
 when a new session begins with `task plan`. Do not use OpenCode's read-only `plan` mode.
@@ -19,7 +19,7 @@ until the user approves the plan.
    --short` in each repo under the base. Source changes mean the task is in implementation,
    even when the stage record says PLAN. Skip `plan-open` and do the request as
    implementation work. Only an explicit `task plan` from the user overrides this.
-2. **Tracker steps — from the project skill:** derive the issue id from the branch,
+2. **Tracker steps — from the workspace skill:** derive the issue id from the branch,
    fetch the issue (title, description, acceptance criteria, comments — the source of
    truth), and mark it started. No id in the branch → skip the tracker and ask the user
    what the task is (or plan from the branch name).
@@ -30,7 +30,7 @@ until the user approves the plan.
    brainstorming, `PLAN.md`, or plannotator gate, you must be able to answer all of:
    - **Observed behaviour** — the concrete symptom: failing request/response, exact
      error text, stack trace or log lines, the env, and the affected entity (the
-     project skill names which: partner/ids, device/build, …).
+     workspace skill names which: partner/ids, device/build, …).
    - **Expected behaviour** — acceptance criteria, or the exact desired output.
    - **Where** — the repo/service/screen/flow, precise enough to point at the code.
    - **How to reproduce or verify** — steps, a request, a test, or real data.
@@ -61,7 +61,7 @@ until the user approves the plan.
    it to `## Questions to clarify`. The planner cannot ask the user.
 5. **Planner writes `<worktree-base>/PLAN.md`** — a `planner-subagent` (`references/session-branches.md`,
    tier **planner**), in the foreground. Its brief: load `sadensmol-plan` and follow its
-   structure (it owns the content of `PLAN.md`), the base and
+   structure (it owns the content of `PLAN.md`), `Workflow: task`, the base and
    repos, the ticket facts from step 2–3, the decisions from step 4, and the
    output path. `PLAN.md` must carry all of them: it is the only context left after the
    reset of step 6. It also carries `## Decisions`: one `U<n>` entry per user decision
@@ -94,16 +94,19 @@ until the user approves the plan.
    the only exception is the log appends of `SKILL.md` → *Q&A log*, through `pair.py`.
    The approval freezes `PLAN.md`: after it, nobody changes the file (`SKILL.md` →
    *Stages*).
-6. **Open the gate** — the plan discussion starts in a clean context (MUST FOLLOW).
-   When the planner has just written the first `PLAN.md` and your conversation did not
-   start with the `Plan discussion:` prompt, do not open the gate yourself. Run `python3
-   <sadensmol-task-skill-dir>/scripts/pair.py fresh --base <worktree-base> --then plan`
-   once (`references/fresh.md`): it restarts every agent — the writer, and the reviewer
-   in pair mode — in a new conversation whose only context is `PLAN.md`. Tell the user in
-   one line that the sessions restart with a clean context for the plan discussion, then
-   end the turn. The restarted writer opens the gate. A session that started with
-   `Plan discussion:` opens it directly, and reworks and re-opens during the discussion
-   never reset again.
+6. **Open the gate — writing the plan does not complete the handoff (MUST FOLLOW).**
+   After the planner writes the first `PLAN.md`, start the plan discussion without another
+   user command. Prefer a clean context when this conversation did not start with
+   `Plan discussion:`. Follow `references/fresh.md` → *Verified plan handoff* before running
+   `python3 <sadensmol-task-skill-dir>/scripts/pair.py fresh --base <worktree-base> --then plan`.
+   A detached `restart: started` response proves only that the helper launched.
+   Never report a successful restart or end on "plan ready" from that response alone.
+   Confirm the replacement writer took over, or recover here when the restart fails.
+   A stale session record or failed restart must not strand the completed plan:
+   continue this step in the current session, without another restart or user command.
+   This recovery waives only the clean-context restart, not review or approval guards.
+   A session that starts with `Plan discussion:` also continues here directly.
+   Reworks and re-openings during the discussion never reset again.
 
    **Questions to clarify — settle what you can, then the user answers one at a time
    (MUST FOLLOW).** Read all of `PLAN.md` → `## Questions to clarify`. A question is open
@@ -131,16 +134,21 @@ until the user approves the plan.
       one brief as user decisions (step 5). An answer equal to `assumed:` changes no plan
       item. Then open the gate again (the delta shows the change).
 
-   The user approves the plan while a question is still open → ask the open questions
-   (step 3) before step 7. Every answer equals its `assumed:` → the approval stands; the
+   The user approves the plan while a question is still open → first repeat the
+   source/noncritical check in step 1. A question's heading is not proof that it needs
+   the user. Resolve routine scope-preserving choices yourself. Ask only the remaining
+   critical questions (step 3), and continue independent approved work. Never infer a
+   critical answer from general plan approval. Every answer equals its `assumed:` → the approval stands; the
    planner closes the questions with no other change. An answer that changes the plan →
    rework and open the gate again; that approval no longer counts.
 
    "Later" from the user is an answer: log it, the `assumed:` answer stays, and the
    planner marks what waits for it. A deferral never lets you choose for the user.
 
-   Open it in the background, through the helper
-   (`references/plannotator.md`). The plan gate keeps its own baseline, apart from the
+   Open it through the helper with result delivery
+   (`references/plannotator.md` → *Own the gate through its result*).
+   Keep ownership until the result arrives, then act on it without another user message.
+   The plan gate keeps its own baseline, apart from the
    code `review` one. Check it first:
 
    ```bash
@@ -179,15 +187,26 @@ until the user approves the plan.
    follow the stale-`annotate` rule in `references/plannotator.md`; preserve review notes
    before closing or relaunching.
 
+   **Verify the visible result.** A launch message alone does not prove the page opened.
+   Check the task's review companion in `agtermctl tree --json`: its overlay must show
+   the plan review URL with `state: loaded`. Only then report that the review is open.
+   If opening fails, read the helper's output and recover within this task. Reuse an
+   existing current review; never discard notes or launch a duplicate. Report a concrete
+   unresolved blocker only when recovery cannot continue. Never wait for "and then?"
+   before opening the plan gate.
+
    **Approval is explicit, never inferred (MUST FOLLOW).** `Resolved: PLAN.md`, a closed
    window, an empty annotation set, or a completed background notification only mean the
    session ended. Approved = the tool reports an explicit Approve, or the user says so in
    chat ("approved", "lgtm", "go", "implement"). Unsure → it was not approved; ask.
-7. **Approved → switch to IMPL, then implement at once.** Only after the explicit
-   approval, run `python3 <sadensmol-task-skill-dir>/scripts/pair.py fresh --base
+7. **Approved → switch to IMPL, then implement at once.** The approval event resumes
+   the task automatically. Do not acknowledge it and stop, wait for "continue", or ask
+   whether to implement. After resolving any remaining critical questions, run
+   `python3 <sadensmol-task-skill-dir>/scripts/pair.py fresh --base
    <worktree-base> --then impl` (`references/fresh.md`): it restarts both sessions on the
-   main model in new conversations. Tell the user in one line that both sessions restart
-   with a clean context and implement, then end the turn. The restarted writer starts
+   main model in new conversations. Follow *Verified implementation handoff* there:
+   validate the target, observe the result, and recover a failed restart. A detached
+   launch is not a completed handoff. The restarted writer starts
    with the `Implementation:` prompt and implements. Approval is the instruction to
    implement; do not ask "should I implement?" or wait for another command. This switch is
    one-way (`SKILL.md` → *Stages*): `pair.py` and the gate scripts refuse the plan stage,

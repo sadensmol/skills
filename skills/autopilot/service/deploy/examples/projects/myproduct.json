@@ -1,0 +1,16 @@
+{
+  "slack_channel": "myproduct",
+  "linear_team": "MYPRODUCT",
+  "linear_project": "myproduct",
+  "repos": [
+    {
+      "name": "myproduct",
+      "default_branch": "main",
+      "deploy": {
+        "job": "deploy",
+        "check": "curl -fsS https://myproduct.example.com/version | grep -q {short_sha}",
+        "timeout_minutes": 60
+      }
+    }
+  ]
+}

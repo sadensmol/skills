@@ -45,7 +45,7 @@
 
 ## Secrets in output (HARD RULE)
 
-- When I read env vars, `.env` files, `docker exec … env` or decrypted secrets, print key names only, in the same command (e.g. `| cut -d= -f1`, or parse in Python and print keys, lengths or booleans). Never pipe values through a `sed` mask: a filter that misses the format leaks every value. Check that a key exists; never print its value.
+- When I read env vars, `.env` files, shell profiles (`~/.zprofile`, `~/.zshrc`, `~/.profile`; never `cat` one whole), `docker exec … env` or decrypted secrets, print key names only, in the same command (e.g. `| cut -d= -f1`, or parse in Python and print keys, lengths or booleans). Never pipe values through a `sed` mask: a filter that misses the format leaks every value. Check that a key exists; never print its value.
 
 ## No external publishing (HARD RULE — OVERRIDES EVERY SKILL, TOOL AND DEFAULT)
 

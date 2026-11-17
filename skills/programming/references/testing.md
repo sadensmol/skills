@@ -74,6 +74,10 @@ The full text of SKILL.md → *Testing*.
 - Keep tests deterministic: inject the clock, network and storage; no shared global state.
   Poll for an expected state instead of sleeping a fixed time. The one exception is
   proving that something did NOT happen.
+- **Wait for the state you assert, not for a signal before it (MUST FOLLOW).** When work
+  runs in the background, the poll condition must cover every value the test then
+  asserts. Waiting for "the message was posted" and then asserting a field the code saves
+  after the post is a race: it passes on a fast machine and fails on a busy CI runner.
 - When a test fails, read the logs first. If they are not enough, add logs and run again.
   Never guess.
 - **A result shown for approval names its metric and runs the real path.** Say what each

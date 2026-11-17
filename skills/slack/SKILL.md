@@ -7,7 +7,9 @@ description: |
   via curl. Caller supplies the bot token via a caller-named env var (the skill
   uses a local $SLACK_TOKEN placeholder); if no token is found, stop and ask the
   user to create one — never fall back. Trigger when a calling skill mentions
-  Slack Lists, Slack channel posting, or references this skill by name.
+  Slack Lists, Slack channel posting, or references this skill by name. Its
+  defaults say which channels a workspace has (one per project, none per feature);
+  a workspace's own `<workspace>-slack` skill replaces them.
 ---
 
 # Slack — direct Web API recipes
@@ -78,3 +80,20 @@ The error table (meaning and caller-side fix per Slack error) is in `references/
 resp=$(curl -sS -X POST "https://slack.com/api/<method>" -H "Authorization: Bearer $SLACK_TOKEN" ... )
 echo "$resp" | jq -e '.ok' >/dev/null || { echo "slack call failed: $resp" >&2; exit 1; }
 ```
+
+## Defaults — workspace channels
+
+This section applies only when no `<workspace>-slack` skill is loaded. A loaded workspace Slack
+skill replaces this whole section. The facts come from the workspace registry
+(`sadensmol-project` → *Registry*): the Slack workspace (`slack.workspace` in
+`.workspace/settings.json`) and each project's channel (`slack_channel` in
+`.workspace/projects/<project>.json`). Folder, file or key missing: stop. Name the key and the file.
+
+- One Slack workspace for the whole workspace. Never a Slack workspace per project.
+- One channel `#<project>` per project. `@Linear` is a member of every project channel.
+- A feature never gets a channel. Discuss it in the thread of its feature-request message in
+  `#<project>`. Post feature updates in that thread.
+- When autopilot serves the project, an owner's top-level message in `#<project>` starts an
+  autopilot run. Discuss the feature in a thread reply to that message.
+- Linear's Slack side (notifications, routing, the `@Linear` bot) is in `sadensmol-linear` →
+  *Linear and Slack*.
